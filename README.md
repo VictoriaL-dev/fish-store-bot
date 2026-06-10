@@ -1,5 +1,17 @@
 # 🐟 Telegram Fish Store Bot
-A Telegram bot for a fish store integrated with Strapi CMS for content and inventory management, using Redis for user states.
+A Telegram bot tailored for a fish store. This application bridges a sleek Telegram customer interface with a powerful 
+**Strapi CMS** backend for real-time inventory management, product updates, and order processing. By leveraging **Redis**, 
+the bot maintains lightning-fast user session states (FSM), allowing customers to seamlessly browse products, manage 
+their shopping carts, and place orders directly from their phones.
+
+
+## 📌 Table of Contents
+- [⚙️ Tech Stack](#-tech-stack)
+- [📁 Project Structure](#-project-structure)
+- [🛠️ Installation & Setup](#-installation--setup)
+- [🚀 Quick Start Guide](#-quick-start-guide)
+- [🔐 Managing PostgreSQL via Adminer](#-managing-postgresql-via-adminer-_docker-only_)
+- [🔍 Inspecting Redis Data via Docker](#-inspecting-redis-data-via-docker)
 
 
 ## ⚙️ Tech Stack
@@ -22,6 +34,9 @@ A Telegram bot for a fish store integrated with Strapi CMS for content and inven
 ├── scripts/            # Automation and helper scripts
 ├── src/                # Strapi backend source code
 ├── types/              # TypeScript type definitions
+├── database.py         # Handles connection pool setup for Redis
+├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
+├── strapi_api.py       # Client for executing requests against the Strapi REST API
 ├── logging_config.py   # Root logging configuration for the Python bot
 ├── main.py             # Main entry point for the Python bot
 ├── requirements.txt    # Python dependencies
@@ -33,11 +48,15 @@ A Telegram bot for a fish store integrated with Strapi CMS for content and inven
 
 ## 🛠️ Installation & Setup
 
-### Prerequisites
+### Prerequisites:
 - [Node.js](https://nodejs.org/en) (v20, v22, or v24)
 - [Python](https://www.python.org/) (v3.10 or higher)
-- Redis server (running [locally](https://redis-docs.ru/operate/oss_and_stack/install/install-redis/) or via [Docker Compose](https://www.docker.com/products/docker-desktop/))
+- Redis server (running [locally](https://redis-docs.ru/operate/oss_and_stack/install/install-redis/) or via [Docker](https://www.docker.com/products/docker-desktop/))
 - Telegram bot token (from [@BotFather](https://t.me/BotFather))
+- Basic knowledge of [Strapi CMS](https://docs.strapi.io/cms/quick-start)
+- Strapi API [token](https://docs.strapi.io/cms/features/api-tokens)
+- Strapi [Collection Types](https://docs.strapi.io/cms/features/content-type-builder): 
+  - Product: title, description, picture, price
 
 ### Common Setup:
 #### 1. Clone the repository:
@@ -59,6 +78,10 @@ API_TOKEN_SALT="tobemodified"
 ADMIN_JWT_SECRET="tobemodified"
 TRANSFER_TOKEN_SALT="tobemodified"
 ENCRYPTION_KEY="tobemodified"
+
+# Strapi API
+STRAPI_TOKEN="your_full_access_or_read_only_token"
+STRAPI_URL="http://localhost:1337"
 
 # Database
 DATABASE_CLIENT=postgres  # Replace with 'sqlite' if you don't want to use PostgreSQL
@@ -160,9 +183,13 @@ docker-compose -f docker-compose-dev.yaml exec redis redis-cli
 
 #### 3. Useful Redis commands.
 Once inside the CLI, you can use these basic commands to inspect the bot's state:
-- `KEYS *` — List all keys currently stored in the database.
-- `GET <key_name>` — View the content of a specific text key.
-- `FLUSHALL` — Clear all data from all databases.
+- `KEYS *` - List all keys currently stored in the database.
+- `GET <key>` - View the content of a specific text key.
+- `TTL <key>` - Check the remaining Time-To-Live for temporary keys.
+- `DEL <key>` or `DEL <key1> <key2>` - Remove specific keys from the database.
+- `UNLINK <huge_key>` - Asynchronously delete huge keys without blocking the main thread.
+- `FLUSHDB` - Clear all data from current database.
+- `FLUSHALL` - Clear all data from all databases.
 
 #### 4. Exit the CLI.
 Type `exit` or press `Ctrl + C` to return to your local terminal.
