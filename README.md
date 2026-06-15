@@ -10,7 +10,7 @@ their shopping carts, and place orders directly from their phones.
 - [📁 Project Structure](#-project-structure)
 - [🛠️ Installation & Setup](#-installation--setup)
 - [🚀 Quick Start Guide](#-quick-start-guide)
-- [🔐 Managing PostgreSQL via Adminer](#-managing-postgresql-via-adminer-_docker-only_)
+- [🔐 Managing PostgreSQL via Adminer](#-managing-postgresql-via-adminer-docker-only)
 - [🔍 Inspecting Redis Data via Docker](#-inspecting-redis-data-via-docker)
 
 
@@ -34,11 +34,12 @@ their shopping carts, and place orders directly from their phones.
 ├── scripts/            # Automation and helper scripts
 ├── src/                # Strapi backend source code
 ├── types/              # TypeScript type definitions
-├── database.py         # Handles connection pool setup for Redis
-├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
-├── strapi_api.py       # Client for executing requests against the Strapi REST API
-├── logging_config.py   # Root logging configuration for the Python bot
-├── main.py             # Main entry point for the Python bot
+├── bot/                # Core bot logic
+│   ├── database.py         # Handles connection pool setup for Redis
+│   ├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
+│   ├── strapi_api.py       # Client for executing requests against the Strapi REST API
+│   ├── logging_config.py   # Logging configuration for the Python bot
+│   └── main.py             # Main entry point for the Python bot
 ├── requirements.txt    # Python dependencies
 ├── package.json        # Node.js project manifest and Strapi dependencies
 ├── package-lock.json   # Locked versions of Node.js dependencies
@@ -55,8 +56,6 @@ their shopping carts, and place orders directly from their phones.
 - Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Basic knowledge of [Strapi CMS](https://docs.strapi.io/cms/quick-start)
 - Strapi API [token](https://docs.strapi.io/cms/features/api-tokens)
-- Strapi [Collection Types](https://docs.strapi.io/cms/features/content-type-builder): 
-  - Product: title, description, picture, price
 
 ### Common Setup:
 #### 1. Clone the repository:
@@ -112,7 +111,7 @@ TG_BOT_TOKEN="your_bot_token"
 npm install
 ```
 
-### Frontend Setup (Python Bot)
+### Frontend Setup (Telegram Bot)
 #### 1. Set up a virtual environment:
 ```bash
 python -m venv venv
@@ -143,6 +142,7 @@ You can access the admin panel at [http://localhost:1337/admin](http://localhost
 #### 3. Run the Telegram bot:
 Open a new terminal, activate your Python virtual environment, and start the bot:
 ```bash
+cd bot
 python main.py
 ```
 
@@ -150,7 +150,7 @@ python main.py
 Open Telegram, find your bot, and send the `/start` command.
 
 
-## 🔐 Managing PostgreSQL via Adminer _(Docker only)_
+## 🔐 Managing PostgreSQL via Adminer (Docker only)
 This project includes `Adminer`, a lightweight and fast database management interface available via web browser. It 
 is configured to run inside a Docker container alongside PostgreSQL.
 

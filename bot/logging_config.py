@@ -6,9 +6,10 @@ from logging.handlers import RotatingFileHandler
 
 def create_log_file_path(folder_name: str, log_file: str) -> Path:
     """Creates log folder if it doesn't exist."""
-    folder = Path(folder_name)
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder / log_file
+    base_dir = Path(__file__).resolve().parent.parent
+    logs_dir = base_dir / folder_name
+    logs_dir.mkdir(exist_ok=True)
+    return logs_dir / log_file
 
 
 def setup_file_handler(file_path: Path) -> RotatingFileHandler:
