@@ -35,8 +35,9 @@ their shopping carts, and place orders directly from their phones.
 ├── src/                # Strapi backend source code
 ├── types/              # TypeScript type definitions
 ├── bot/                # Core bot logic
-│   ├── database.py         # Handles connection pool setup for Redis
+│   ├── database.py         # Connection pool setup for Redis
 │   ├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
+│   ├── screens.py          # Bot screens management and UI rendering
 │   ├── strapi_api.py       # Client for executing requests against the Strapi REST API
 │   ├── logging_config.py   # Logging configuration for the Python bot
 │   └── main.py             # Main entry point for the Python bot

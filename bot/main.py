@@ -4,27 +4,20 @@ import logging
 from functools import partial
 
 from dotenv import load_dotenv
-from telegram.error import TimedOut, NetworkError
+from telegram.error import TimedOut, NetworkError, TelegramError
 from telegram.ext import Updater, Filters, CallbackQueryHandler, CommandHandler, MessageHandler
 
 from logging_config import init_app_logging
 from database import get_database_connection
 from strapi_api import StrapiClient
-from keyboards import (
-    get_main_menu_keyboard,
-    get_catalog_keyboard,
-    get_back_to_main_menu_keyboard,
-    get_back_to_catalog_keyboard
-)
+from screens import render_main_menu, render_catalog
+from keyboards import get_main_menu_keyboard, get_product_keyboard, get_cart_keyboard
 
 logger = logging.getLogger(__name__)
 
 
 def start(update, context) -> str:
-    """Handler for the START state.
-
-    Sends the main menu to the user and puts it into the MENU state.
-    """
+    """Handler for the START state."""
     update.effective_message.reply_text(
         text="👋 Добро пожаловать в наш Рыбный Магазин!\n\nВыберите опцию из меню ниже:",
         reply_markup=get_main_menu_keyboard()
@@ -33,60 +26,39 @@ def start(update, context) -> str:
 
 
 def handle_main_menu(update, context, strapi_client) -> str:
-    """Handler for the MENU state.
-
-    Waits for a click on the main menu buttons and switches the user to the corresponding state.
-    """
+    """Handler for the MENU state."""
     if update.message:
-        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки меню выше 👆")
+        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки управления выше 👆")
         return "MENU"
 
     query = update.callback_query
 
     if query.data == "catalog":
-        products = strapi_client.get_all_products()
-
-        if products:
-            text = "📋 Наш ассортимент.\n\nВыберите интересующий товар для просмотра деталей:"
-            reply_markup = get_catalog_keyboard(products=products)
-        else:
-            text = "ℹ️ Каталог временно пуст.\n\nНаша команда уже обновляет ассортимент. Пожалуйста, загляните позже!"
-            reply_markup = get_back_to_main_menu_keyboard()
-
-        query.edit_message_text(
-            text=text,
-            reply_markup=reply_markup
-        )
-        return "CATALOG"
+        return render_catalog(update=update, context=context, query=query, strapi_client=strapi_client, send_new=False)
 
     if query.data == "cart":
-        query.answer("Корзина пока в разработке! 😉", show_alert=True)
-        return "MENU"
+        return handle_cart(update, context, strapi_client=strapi_client)
 
     if query.data == "about":
-        query.answer("О нас пока в разработке! 😉", show_alert=True)
+        query.answer("О нас пока в разработке! 😉")
         return "MENU"
 
     return "MENU"
 
 
 def handle_catalog(update, context, db, strapi_client) -> str:
-    """Handler for the CATALOG state.
-
-    Waits for a click on a specific product and switches the user to the corresponding state.
-    """
+    """Handler for the CATALOG state."""
     if update.message:
-        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки меню выше 👆")
+        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки управления выше 👆")
         return "CATALOG"
 
     query = update.callback_query
 
-    if query.data == "back_to_menu":
-        query.edit_message_text(
-            text="👋 Добро пожаловать в наш Рыбный Магазин!\n\nВыберите опцию из меню ниже:",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return "MENU"
+    if query.data == "menu":
+        return render_main_menu(query=query)
+
+    if query.data == "cart":
+        return handle_cart(update, context, strapi_client=strapi_client)
 
     if query.data.startswith("product_"):
         product_id = query.data.split("_")[1]
@@ -95,14 +67,17 @@ def handle_catalog(update, context, db, strapi_client) -> str:
         if not product:
             query.edit_message_text(
                 text="ℹ️ Данные о товаре временно отсутствуют.\n\nПожалуйста, загляните позже!",
-                reply_markup=get_back_to_catalog_keyboard()
+                reply_markup=get_product_keyboard(product_id="")
             )
             return "PRODUCT"
 
         caption, full_image_url = strapi_client.parse_product_data(product_data=product)
-        reply_markup = get_back_to_catalog_keyboard()
+        reply_markup = get_product_keyboard(product_id=product_id)
 
-        query.message.delete()
+        try:
+            query.message.delete()
+        except TelegramError:
+            pass
 
         file_id_cache_key = f"tg-bot:cache:product:{product_id}:file-id"
         cached_file_id = db.get(file_id_cache_key)
@@ -117,26 +92,25 @@ def handle_catalog(update, context, db, strapi_client) -> str:
                 )
                 return "PRODUCT"
             except Exception as e:
-                logger.warning(f"The cached file_id is out of date or invalid: {e}")
+                logger.warning(f"The cached file_id for product {product_id} is out of date or invalid: {e}")
                 pass
 
         if full_image_url:
-            photo_file = strapi_client.download_product_image(image_url=full_image_url)
-
-            if photo_file:
-                try:
-                    sent_message = context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=photo_file,
-                        caption=caption,
-                        reply_markup=reply_markup
-                    )
-                    tg_file_id = sent_message.photo[-1].file_id
-                    db.set(file_id_cache_key, tg_file_id, ex=2592000)
-                    return "PRODUCT"
-                except Exception as e:
-                    logger.exception(f"Failed to send message with downloaded photo: {e}")
-                    pass
+            with strapi_client.download_product_image(image_url=full_image_url) as photo_file:
+                if photo_file:
+                    try:
+                        sent_message = context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=photo_file,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                        tg_file_id = sent_message.photo[-1].file_id
+                        db.set(file_id_cache_key, tg_file_id, ex=2592000)
+                        return "PRODUCT"
+                    except Exception as e:
+                        logger.exception(f"Failed to send message with downloaded photo: {e}")
+                        pass
 
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -148,36 +122,84 @@ def handle_catalog(update, context, db, strapi_client) -> str:
     return "CATALOG"
 
 
-def handle_product_card(update, context, strapi_client) -> str:
-    """Handler for the PRODUCT state.
-
-    Waits for a button press to return from the product card to the catalog.
-    """
+def handle_product(update, context, strapi_client) -> str:
+    """Handler for the PRODUCT state."""
     if update.message:
-        update.effective_message.reply_text(text="Используйте кнопку под товаром, чтобы вернуться в каталог 👆")
+        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки управления выше 👆")
         return "PRODUCT"
 
     query = update.callback_query
 
-    if query.data == "back_to_catalog":
-        products = strapi_client.get_all_products()
-        query.message.delete()
+    if query.data == "catalog":
+        return render_catalog(update=update, context=context, query=query, strapi_client=strapi_client, send_new=True)
 
-        if products:
-            text = "📋 Наш ассортимент.\n\nВыберите интересующий товар для просмотра деталей:"
-            reply_markup = get_catalog_keyboard(products=products)
-        else:
-            text = "ℹ️ Каталог временно пуст.\n\nНаша команда уже обновляет ассортимент. Пожалуйста, загляните позже!"
-            reply_markup = get_back_to_main_menu_keyboard()
+    if query.data.startswith("add_"):
+        product_id = query.data.split("_")[1]
+        user_id = update.effective_chat.id
 
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text,
-            reply_markup=reply_markup
-        )
-        return "CATALOG"
+        cart_id = strapi_client.get_or_create_cart(tg_id=user_id)
+        strapi_client.add_product_to_cart(cart_id=cart_id, product_id=product_id)
+
+        query.answer("🛒 Товар успешно добавлен в корзину!")
+        return "PRODUCT"
 
     return "PRODUCT"
+
+
+def handle_cart(update, context, strapi_client) -> str:
+    """Handler for the CART state."""
+    if update.message:
+        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки управления выше 👆")
+        return "CART"
+
+    query = update.callback_query
+    user_id = update.effective_chat.id
+
+    if query.data == "menu":
+        return render_main_menu(query=query)
+
+    if query.data == "catalog":
+        return render_catalog(update=update, context=context, query=query, strapi_client=strapi_client, send_new=False)
+
+    if query.data.startswith("del_"):
+        cart_product_id = query.data.split("_")[1]
+        is_deleted = strapi_client.remove_cart_product(cart_product_id=cart_product_id)
+
+        if is_deleted:
+            query.answer("💥 Товар удален из корзины.")
+        else:
+            query.answer("⚠️ Не удалось удалить товар. Попробуйте позже.")
+            return "CART"
+
+    if query.data == "order":
+        query.answer("Оформление заказа в разработке! 💳")
+        return "CART"
+
+    cart_id = strapi_client.get_or_create_cart(tg_id=user_id)
+    cart_items = strapi_client.get_cart_details(cart_id=cart_id)
+
+    if not cart_items:
+        text = "🛒 Ваша корзина пуста.\n\nЗагляните в 🐟 Каталог, чтобы выбрать свежую рыбу!"
+        reply_markup = get_cart_keyboard(cart_products=[])
+    else:
+        text = "🛒 Ваш заказ:\n\n"
+        total_price = 0
+
+        for index, item in enumerate(cart_items, 1):
+            product = item.get("product", {})
+            title = product.get("title", f"Товар №{index}")
+            price = product.get("price", 0)
+            quantity = item.get("quantity", 1)
+            cost = price * quantity
+            total_price += cost
+
+            text += f"{index}. {title}\n    └ {quantity} кг х {price} руб. = {cost} руб.\n\n"
+
+        text += f"Итого: {total_price} руб."
+        reply_markup = get_cart_keyboard(cart_products=cart_items)
+
+    query.edit_message_text(text=text, reply_markup=reply_markup)
+    return "CART"
 
 
 def handle_user_reply(update, context, db, strapi_client) -> None:
@@ -191,11 +213,16 @@ def handle_user_reply(update, context, db, strapi_client) -> None:
         user_reply = update.message.text
     elif update.callback_query:
         user_reply = update.callback_query.data
-        update.callback_query.answer()
     else:
         return
 
     user_key = f"tg-bot:user:{chat_id}"
+    lock_key = f"tg-bot:lock:{chat_id}"
+
+    is_locked = not db.set(lock_key, "locked", ex=3, nx=True)
+    if is_locked and update.callback_query:
+        update.callback_query.answer("Секунду, обрабатываю предыдущий запрос... ⏳")
+        return
 
     if user_reply == "/start":
         user_state = "START"
@@ -206,15 +233,25 @@ def handle_user_reply(update, context, db, strapi_client) -> None:
         "START": start,
         "MENU": partial(handle_main_menu, strapi_client=strapi_client),
         "CATALOG": partial(handle_catalog, db=db, strapi_client=strapi_client),
-        "PRODUCT": partial(handle_product_card, strapi_client=strapi_client),
+        "PRODUCT": partial(handle_product, strapi_client=strapi_client),
+        "CART": partial(handle_cart, strapi_client=strapi_client),
     }
     state_handler = states_functions.get(user_state, start)
 
     try:
         next_state = state_handler(update, context)
         db.set(user_key, next_state)
-    except Exception:
+    except Exception as e:
+        logger.error(f"An error occurred while handling state {user_state}: {e}")
         raise
+    finally:
+        db.delete(lock_key)
+
+    if update.callback_query:
+        try:
+            update.callback_query.answer()
+        except TelegramError:
+            pass
 
 
 def handle_tg_error(update, context) -> None:
@@ -246,7 +283,6 @@ def handle_tg_error(update, context) -> None:
 
 def main():
     init_app_logging(folder_name="logs", log_file="tg_bot.log")
-
     logger.info("Launching the Telegram bot...")
 
     try:
@@ -275,7 +311,6 @@ def main():
 
         updater.start_polling()
         updater.idle()
-
     except Exception as e:
         logger.exception(f"The Telegram bot crashed during launch: {e}")
 
