@@ -13,6 +13,17 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
+def get_about_keyboard() -> InlineKeyboardMarkup:
+    """Generates navigation buttons for the About screen."""
+    keyboard = [
+        [
+            InlineKeyboardButton("⬅️ Главное меню", callback_data="menu"),
+            InlineKeyboardButton("🐟 Каталог", callback_data="catalog")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def get_catalog_keyboard(products: list) -> InlineKeyboardMarkup:
     """Generates a product list keyboard based on data from Strapi."""
     keyboard = []

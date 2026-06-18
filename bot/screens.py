@@ -1,6 +1,6 @@
 from telegram.error import TelegramError
 
-from keyboards import get_main_menu_keyboard, get_catalog_keyboard
+from keyboards import get_main_menu_keyboard, get_about_keyboard, get_catalog_keyboard
 
 
 def render_main_menu(query) -> str:
@@ -10,6 +10,25 @@ def render_main_menu(query) -> str:
         reply_markup=get_main_menu_keyboard()
     )
     return "MENU"
+
+
+def render_about(query) -> str:
+    """Edits message to show the About us screen."""
+    text = (
+        "🐟 *Рыбный Магазин «Свежий Улов»*\n\n"
+        "Мы поставляем самую свежую рыбу и морепродукты напрямую с Камчатки и Мурманска. "
+        "Каждая позиция проходит строгий контроль качества перед тем, как попасть к вам на стол.\n\n"
+        "📍 *Наш адрес:* г. Москва, ул. Рыбная, д. 10\n"
+        "📞 *Контакты:* +7 (999) 123-45-67\n"
+        "⏰ *Режим работы:* Ежедневно с 09:00 до 21:00\n\n"
+        "Выберите интересующий раздел ниже, чтобы продолжить:"
+    )
+    query.edit_message_text(
+        text=text,
+        reply_markup=get_about_keyboard(),
+        parse_mode="Markdown"
+    )
+    return "ABOUT"
 
 
 def render_catalog(update, context, query, strapi_client, send_new) -> str:

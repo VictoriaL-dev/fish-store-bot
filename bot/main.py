@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 from functools import partial
@@ -10,7 +11,7 @@ from telegram.ext import Updater, Filters, CallbackQueryHandler, CommandHandler,
 from logging_config import init_app_logging
 from database import get_database_connection
 from strapi_api import StrapiClient
-from screens import render_main_menu, render_catalog
+from screens import render_main_menu, render_about, render_catalog
 from keyboards import get_main_menu_keyboard, get_product_keyboard, get_cart_keyboard
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,26 @@ def handle_main_menu(update, context, strapi_client) -> str:
         return handle_cart(update, context, strapi_client=strapi_client)
 
     if query.data == "about":
-        query.answer("О нас пока в разработке! 😉")
-        return "MENU"
+        return render_about(query=query)
 
     return "MENU"
+
+
+def handle_about(update, context, strapi_client) -> str:
+    """Handler for the ABOUT state."""
+    if update.message:
+        update.effective_message.reply_text(text="Пожалуйста, используйте кнопки управления выше 👆")
+        return "ABOUT"
+
+    query = update.callback_query
+
+    if query.data == "menu":
+        return render_main_menu(query=query)
+
+    if query.data == "catalog":
+        return render_catalog(update=update, context=context, query=query, strapi_client=strapi_client, send_new=False)
+
+    return "ABOUT"
 
 
 def handle_catalog(update, context, db, strapi_client) -> str:
@@ -79,7 +96,7 @@ def handle_catalog(update, context, db, strapi_client) -> str:
         except TelegramError:
             pass
 
-        file_id_cache_key = f"tg-bot:cache:product:{product_id}:file-id"
+        file_id_cache_key = f"tg-bot:product:{product_id}:image-id"
         cached_file_id = db.get(file_id_cache_key)
 
         if cached_file_id:
@@ -172,8 +189,17 @@ def handle_cart(update, context, strapi_client) -> str:
             return "CART"
 
     if query.data == "order":
-        query.answer("Оформление заказа в разработке! 💳")
-        return "CART"
+        cart_id = strapi_client.get_or_create_cart(tg_id=user_id)
+        cart_products = strapi_client.get_cart_details(cart_id=cart_id)
+
+        if not cart_products:
+            query.answer("⚠️ Нельзя оформить заказ с пустой корзиной!", show_alert=True)
+            return "CART"
+
+        query.edit_message_text(
+            text="📧 Пожалуйста, введите ваш адрес электронной почты для оформления заказа:\nПример: example@mail.ru"
+        )
+        return "WAITING_EMAIL"
 
     cart_id = strapi_client.get_or_create_cart(tg_id=user_id)
     cart_items = strapi_client.get_cart_details(cart_id=cart_id)
@@ -202,6 +228,47 @@ def handle_cart(update, context, strapi_client) -> str:
     return "CART"
 
 
+def handle_email(update, context, strapi_client) -> str:
+    """Handler for the WAITING_EMAIL state."""
+    if update.callback_query:
+        update.callback_query.answer("Пожалуйста, введите вашу почту текстом 👆", show_alert=True)
+        return "WAITING_EMAIL"
+
+    email = update.message.text.strip().lower()
+    tg_id = update.effective_chat.id
+
+    email_regex = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    if not re.match(email_regex, email):
+        update.message.reply_text(
+            text="❌ Некорректный формат почты. Пожалуйста, попробуйте еще раз:\n\nПример: example@mail.ru",
+        )
+        return "WAITING_EMAIL"
+
+    loading_message = update.message.reply_text("⏳ Оформляем заказ...")
+
+    cart_id = strapi_client.get_or_create_cart(tg_id=tg_id)
+    if not cart_id:
+        loading_message.edit_text("⚠️ Ошибка сервера. Пожалуйста, попробуйте ввести почту еще раз чуть позже.")
+        return "MENU"
+
+    strapi_user_id = strapi_client.get_or_create_user(email=email, tg_id=tg_id)
+    if not strapi_user_id:
+        loading_message.edit_text("⚠️ Не удалось привязать почту. Попробуйте ввести почту еще раз чуть позже.")
+        return "WAITING_EMAIL"
+
+    is_linked = strapi_client.link_user_to_cart(cart_id=cart_id, user_id=strapi_user_id)
+    if is_linked:
+        loading_message.edit_text(
+            text=f"🎉 Заказ успешно оформлен!\n\nПользователь с почтой {email} успешно зарегистрирован и привязан к "
+                 f"вашей корзине. Наш менеджер скоро свяжется с вами.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return "MENU"
+    else:
+        loading_message.edit_text("⚠️ Заказ создан, но не удалось связать его с вашим профилем. Мы разберемся с этим!")
+        return "MENU"
+
+
 def handle_user_reply(update, context, db, strapi_client) -> None:
     """Runs whenever a bot receives a message and decides how to process it."""
     if update.effective_chat:
@@ -216,8 +283,8 @@ def handle_user_reply(update, context, db, strapi_client) -> None:
     else:
         return
 
-    user_key = f"tg-bot:user:{chat_id}"
-    lock_key = f"tg-bot:lock:{chat_id}"
+    user_key = f"tg-bot:user:{chat_id}:state"
+    lock_key = f"tg-bot:user:{chat_id}:lock"
 
     is_locked = not db.set(lock_key, "locked", ex=3, nx=True)
     if is_locked and update.callback_query:
@@ -232,9 +299,11 @@ def handle_user_reply(update, context, db, strapi_client) -> None:
     states_functions = {
         "START": start,
         "MENU": partial(handle_main_menu, strapi_client=strapi_client),
+        "ABOUT": partial(handle_about, strapi_client=strapi_client),
         "CATALOG": partial(handle_catalog, db=db, strapi_client=strapi_client),
         "PRODUCT": partial(handle_product, strapi_client=strapi_client),
         "CART": partial(handle_cart, strapi_client=strapi_client),
+        "WAITING_EMAIL": partial(handle_email, strapi_client=strapi_client),
     }
     state_handler = states_functions.get(user_state, start)
 
@@ -293,9 +362,17 @@ def main():
         tg_bot_token = os.environ["TG_BOT_TOKEN"]
         strapi_token = os.environ["STRAPI_TOKEN"]
         strapi_url = os.environ["STRAPI_URL"]
+        strapi_user_role = int(os.environ["STRAPI_USER_ROLE"])
+        strapi_user_password = os.environ["STRAPI_USER_PASSWORD"]
 
         redis_db = get_database_connection(host=redis_host, port=redis_port, password=redis_password)
-        strapi_client = StrapiClient(db=redis_db, strapi_token=strapi_token, strapi_url=strapi_url)
+        strapi_client = StrapiClient(
+            db=redis_db,
+            token=strapi_token,
+            url=strapi_url,
+            user_role=strapi_user_role,
+            user_password=strapi_user_password
+        )
 
         updater = Updater(token=tg_bot_token)
         dispatcher = updater.dispatcher

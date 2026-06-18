@@ -10,6 +10,7 @@ their shopping carts, and place orders directly from their phones.
 - [📁 Project Structure](#-project-structure)
 - [🛠️ Installation & Setup](#-installation--setup)
 - [🚀 Quick Start Guide](#-quick-start-guide)
+- [🔑 Strapi v5 Backend Configuration Guide](#-strapi-v5-backend-configuration-guide)
 - [🔐 Managing PostgreSQL via Adminer](#-managing-postgresql-via-adminer-docker-only)
 - [🔍 Inspecting Redis Data via Docker](#-inspecting-redis-data-via-docker)
 
@@ -80,8 +81,10 @@ TRANSFER_TOKEN_SALT="tobemodified"
 ENCRYPTION_KEY="tobemodified"
 
 # Strapi API
-STRAPI_TOKEN="your_full_access_or_read_only_token"
+STRAPI_TOKEN="your_full_access_or_custom_token"
 STRAPI_URL="http://localhost:1337"
+STRAPI_USER_ROLE=1  # Authenticated user role id
+STRAPI_USER_PASSWORD="your_password_for_strapi_user_creation"
 
 # Database
 DATABASE_CLIENT=postgres  # Replace with 'sqlite' if you don't want to use PostgreSQL
@@ -149,6 +152,48 @@ python main.py
 
 #### 4. Test the bot: 
 Open Telegram, find your bot, and send the `/start` command.
+
+
+## 🔑 Strapi v5 Backend Configuration Guide
+To ensure the Telegram bot can successfully communicate with Strapi v5, you need to configure specific roles and 
+permissions in your Strapi Admin Panel [http://localhost:1337/admin](http://localhost:1337/admin).
+
+### How to Find the Authenticated Role ID
+When the bot automatically registers a new customer using their email during checkout, it forces Strapi to assign them 
+to a default system role (typically Authenticated). To find the exact ID of this role for your strapi_api configuration:
+#### 1. Navigate to Settings ➔ Roles (under the Users & Permissions Plugin section).
+#### 2. Click on the Authenticated role to open its settings.
+#### 3. Look at your browser's address bar. The URL will end with a specific number (e.g., `.../users-permissions/roles/1`).
+#### 4. This number is your Authenticated Role ID. Set this value in your bot's `.env` file.
+
+### Permissions Required for a Custom API Token or Full Access Token
+If you are connecting your Telegram bot to Strapi using a Custom API Token (generated via Settings ➔ API Tokens with 
+token type set to Custom), you must explicitly check the boxes for the following permissions at the bottom of the token 
+settings page:
+
+#### 📦 Core Store Models (Custom Content-Types):
+`Cart`:
+  - find (allows checking if a user already has a shopping cart)
+  - create (allows creating a new shopping cart for a first-time user)
+  - update (allows linking a Strapi User to an existing Cart during checkout)
+
+`Cart-Product`:
+  - find (allows reading cart items to display them in the telegram cart screen)
+  - create (allows adding a new item to the cart)
+  - update (allows incrementing or decrementing product quantities)
+  - delete (allows removing an item from the cart)
+
+`Product`:
+  - find (allows pulling the full list of products for the catalog)
+  - findOne (allows opening a detailed product description card)
+
+#### 👥 System Models (Advanced Plugins):
+`Users-Permissions` (under the User subsection):
+  - find (allows looking up if a customer's email is already registered)
+  - create (allows registering a new user profile with their email during checkout)
+
+`Upload` (Media Library plugin):
+  - find (allows the bot to deep-populate and extract relative URLs for fish images stored inside product relations)
 
 
 ## 🔐 Managing PostgreSQL via Adminer (Docker only)
