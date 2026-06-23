@@ -68,7 +68,6 @@ $RECYCLE.BIN/
 ssl
 nbproject
 public/uploads/*
-!public/uploads/.gitkeep
 .tsbuildinfo
 .eslintcache
 
@@ -111,6 +110,8 @@ dist
 build
 .strapi-updater.json
 .strapi-cloud.json
+strapi
+!strapi/.gitkeep
 
 
 # Byte-compiled / optimized / DLL files

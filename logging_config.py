@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 
 def create_log_file_path(folder_name: str, log_file: str) -> Path:
     """Creates log folder if it doesn't exist."""
-    base_dir = Path(__file__).resolve().parent.parent
+    base_dir = Path(__file__).resolve().parent
     logs_dir = base_dir / folder_name
     logs_dir.mkdir(exist_ok=True)
     return logs_dir / log_file
@@ -42,8 +42,8 @@ def init_app_logging(folder_name: str, log_file: str) -> Logger:
     """Initializes application logging with console and file handlers.
 
     Args:
-        folder_name: Target directory for log files. Created if it doesn't exist.
-        log_file: Name of the log file.
+        folder_name (str): Target directory for log files. Created if it doesn't exist.
+        log_file (str): Name of the log file.
 
     Returns:
         Configured root logger.

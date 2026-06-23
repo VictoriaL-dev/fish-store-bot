@@ -26,26 +26,27 @@ their shopping carts, and place orders directly from their phones.
 
 
 ## 📁 Project Structure
+After creation, your project should look like this:
 ```text
 .
-├── config/             # Strapi configuration files
-├── database/           # Local database migration files
-├── dist/               # Production build outputs
-├── public/             # Static assets for Strapi
-├── scripts/            # Automation and helper scripts
-├── src/                # Strapi backend source code
-├── types/              # TypeScript type definitions
-├── bot/                # Core bot logic
-│   ├── database.py         # Connection pool setup for Redis
-│   ├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
-│   ├── screens.py          # Bot screens management and UI rendering
-│   ├── strapi_api.py       # Client for executing requests against the Strapi REST API
-│   ├── logging_config.py   # Logging configuration for the Python bot
-│   └── main.py             # Main entry point for the Python bot
-├── requirements.txt    # Python dependencies
-├── package.json        # Node.js project manifest and Strapi dependencies
-├── package-lock.json   # Locked versions of Node.js dependencies
-└── tsconfig.json       # TypeScript configuration
+├── strapi/             # Strapi files
+│   ├── config/             # Strapi configuration files
+│   ├── database/           # Local database migration files
+│   ├── dist/               # Production build outputs
+│   ├── public/             # Static assets for Strapi
+│   ├── scripts/            # Automation and helper scripts
+│   ├── src/                # Strapi backend source code
+│   ├── types/              # TypeScript type definitions
+│   ├── package.json        # Node.js project manifest and Strapi dependencies
+│   ├── package-lock.json   # Locked versions of Node.js dependencies
+│   └── tsconfig.json       # TypeScript configuration
+├── database.py         # Connection pool setup for Redis
+├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
+├── screens.py          # Bot screens management and UI rendering
+├── strapi_api.py       # Client for executing requests against the Strapi REST API
+├── logging_config.py   # Logging configuration for the Python bot
+├── main.py             # Main entry point for the Python bot
+└── requirements.txt    # Python dependencies
 ```
 
 
@@ -67,35 +68,20 @@ cd fish-store-bot
 ```
 
 #### 2. Configure environment variables:
-Create a `.env` file in the root directory based on `.env.example` and configure your database choice (toggle between `sqlite` and `postgres`):
+Create a `.env` file in the root directory based on `.env.example` and fill in the variables for PostgreSQL if you plan 
+to run it through Docker, or leave them blank:
 ```dotenv
-# Strapi server
-HOST=0.0.0.0
-PORT=1337
-
-# Strapi secrets
-APP_KEYS="toBeModified1,toBeModified2"
-API_TOKEN_SALT="tobemodified"
-ADMIN_JWT_SECRET="tobemodified"
-TRANSFER_TOKEN_SALT="tobemodified"
-ENCRYPTION_KEY="tobemodified"
-
 # Strapi API
-STRAPI_TOKEN="your_full_access_or_custom_token"
-STRAPI_URL="http://localhost:1337"
+STRAPI_TOKEN=your_full_access_or_custom_token
+STRAPI_URL=http://localhost:1337
 STRAPI_USER_ROLE=1  # Authenticated user role id
-STRAPI_USER_PASSWORD="your_password_for_strapi_user_creation"
+STRAPI_USER_PASSWORD=your_password_for_strapi_user_creation
 
-# Database
-DATABASE_CLIENT=postgres  # Replace with 'sqlite' if you don't want to use PostgreSQL
-DATABASE_HOST=127.0.0.1
+# PostgreSQL
 DATABASE_PORT=5433
 DATABASE_NAME=postgres_db
 DATABASE_USERNAME=postgres_user
-DATABASE_PASSWORD="your_postgres_password"
-DATABASE_SSL=false
-DATABASE_FILENAME=.tmp/data.db
-JWT_SECRET="tobemodified"
+DATABASE_PASSWORD=your_postgres_password
 
 # Adminer
 ADMINER_PORT=8080
@@ -103,16 +89,31 @@ ADMINER_PORT=8080
 # Redis
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
-REDIS_PASSWORD="your_redis_password"
+REDIS_PASSWORD=your_redis_password
 
 # Telegram
-TG_BOT_TOKEN="your_bot_token"
+TG_BOT_TOKEN=your_bot_token
 ```
 
 ### Backend Setup (Strapi)
-#### 1. Install Node dependencies:
+#### 1. Initialize a new Strapi project:
+From the root directory, create a Strapi app inside the `strapi` folder:
 ```bash
-npm install
+cd fish-store-bot
+npx create-strapi-app@5.48.1 strapi
+```
+
+#### 2. Configure environment variables in `strapi/.env`:
+In the automatically created `.env` file in the `strapi` folder configure your database choice (toggle between `sqlite` and `postgres`).
+Make sure the database variables in `strapi/.env` and the root `.env` match:
+```dotenv
+# Database
+DATABASE_CLIENT=postgres  # Replace with 'sqlite' if you don't plan to use PostgreSQL
+DATABASE_HOST=127.0.0.1
+DATABASE_PORT=5433
+DATABASE_NAME=fish_store
+DATABASE_USERNAME=fish_store_user
+DATABASE_PASSWORD=your_postgres_password
 ```
 
 ### Frontend Setup (Telegram Bot)
@@ -139,14 +140,14 @@ docker-compose -f docker-compose-dev.yaml up -d
 
 #### 2. Start the Strapi development server:
 ```bash
+cd strapi
 npm run develop
 ```
 You can access the admin panel at [http://localhost:1337/admin](http://localhost:1337/admin).
 
 #### 3. Run the Telegram bot:
-Open a new terminal, activate your Python virtual environment, and start the bot:
+Open a new terminal in the root directory, activate your Python virtual environment, and start the bot:
 ```bash
-cd bot
 python main.py
 ```
 
@@ -164,7 +165,7 @@ to a default system role (typically Authenticated). To find the exact ID of this
 #### 1. Navigate to Settings ➔ Roles (under the Users & Permissions Plugin section).
 #### 2. Click on the Authenticated role to open its settings.
 #### 3. Look at your browser's address bar. The URL will end with a specific number (e.g., `.../users-permissions/roles/1`).
-#### 4. This number is your Authenticated Role ID. Set this value in your bot's `.env` file.
+#### 4. This number is your Authenticated Role ID. Set this value in your `.env` file.
 
 ### Permissions Required for a Custom API Token or Full Access Token
 If you are connecting your Telegram bot to Strapi using a Custom API Token (generated via Settings ➔ API Tokens with 

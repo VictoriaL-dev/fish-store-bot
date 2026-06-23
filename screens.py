@@ -55,5 +55,4 @@ def render_catalog(update, context, query, strapi_client, send_new) -> str:
         )
     else:
         query.edit_message_text(text=text, reply_markup=reply_markup)
-
     return "CATALOG"

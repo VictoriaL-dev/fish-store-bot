@@ -88,7 +88,7 @@ def handle_catalog(update, context, db, strapi_client) -> str:
             )
             return "PRODUCT"
 
-        caption, full_image_url = strapi_client.parse_product_data(product_data=product)
+        caption, full_image_url = strapi_client.parse_product(product=product)
         reply_markup = get_product_keyboard(product_id=product_id)
 
         try:
@@ -197,7 +197,7 @@ def handle_cart(update, context, strapi_client) -> str:
             return "CART"
 
         query.edit_message_text(
-            text="📧 Пожалуйста, введите ваш адрес электронной почты для оформления заказа:\nПример: example@mail.ru"
+            text="📧 Пожалуйста, введите ваш адрес электронной почты для оформления заказа.\nПример: example@mail.ru"
         )
         return "WAITING_EMAIL"
 

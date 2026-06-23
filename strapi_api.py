@@ -50,9 +50,7 @@ class StrapiClient:
         try:
             response = requests.get(endpoint, headers=self.headers, timeout=10)
             response.raise_for_status()
-            strapi_data = response.json()
-
-            products = strapi_data.get("data", [])
+            products = response.json().get("data", [])
             self.db.set(products_cache_key, json.dumps(products), ex=900)
             return products
         except RequestException as e:
@@ -82,30 +80,29 @@ class StrapiClient:
         if cached_product:
             return json.loads(cached_product)
 
-        endpoint = f"{self.url}/api/products/{product_id}?populate=*"
+        endpoint = f"{self.url}/api/products/{product_id}"
+        params = {"populate": "*"}
 
         try:
-            response = requests.get(endpoint, headers=self.headers, timeout=10)
+            response = requests.get(endpoint, headers=self.headers, params=params, timeout=10)
             response.raise_for_status()
-            strapi_data = response.json()
-
-            product_data = strapi_data.get("data", {})
-            self.db.set(product_cache_key, json.dumps(product_data), ex=900)
-            return product_data
+            product = response.json().get("data", {})
+            self.db.set(product_cache_key, json.dumps(product), ex=900)
+            return product
         except RequestException as e:
             logger.error(f"An error occurred while requesting product_{product_id}: {e}")
         except Exception as e:
             logger.exception(f"An unexpected error occurred while requesting product_{product_id}: {e}")
         return {}
 
-    def parse_product_data(self, product_data: dict) -> tuple:
+    def parse_product(self, product: dict) -> tuple:
         """Parses JSON from Strapi and returns a tuple with the caption and full image url.
 
         Extracts the title, description, price, and media details from the provided
         product dictionary.
 
         Args:
-            product_data (dict): A dictionary containing product attributes
+            product (dict): A dictionary containing product attributes
                 retrieved from Strapi.
 
         Returns:
@@ -113,9 +110,9 @@ class StrapiClient:
                 1) caption (str): Formatted string with product details.
                 2) full_image_url (str or None): Complete URL to the image, or None if no picture data is found.
         """
-        title = product_data.get("title", "Название отсутствует")
-        description = product_data.get("description", "Описание отсутствует")
-        price = product_data.get("price", 0)
+        title = product.get("title", "Название отсутствует")
+        description = product.get("description", "Описание отсутствует")
+        price = product.get("price", 0)
 
         caption = (
             f"{title}\n\n"
@@ -123,9 +120,9 @@ class StrapiClient:
             f"{description}\n\n"
         )
 
-        picture_data = product_data.get("picture")
-        if isinstance(picture_data, dict):
-            image_url_relative = picture_data.get("url")
+        picture = product.get("picture")
+        if isinstance(picture, dict):
+            image_url_relative = picture.get("url")
             full_image_url = f"{self.url}{image_url_relative}" if image_url_relative else None
         else:
             full_image_url = None
@@ -154,7 +151,6 @@ class StrapiClient:
         try:
             response = requests.get(image_url, timeout=10)
             response.raise_for_status()
-
             photo_file = BytesIO(response.content)
             photo_file.name = "fish.jpg"
             yield photo_file
@@ -208,8 +204,8 @@ class StrapiClient:
         try:
             response = requests.post(endpoint, headers=self.headers, json=payload, timeout=10)
             response.raise_for_status()
-            cart_data = response.json().get("data", {})
-            cart_id = cart_data.get("documentId")
+            cart = response.json().get("data", {})
+            cart_id = cart.get("documentId")
 
             if cart_id:
                 self.db.set(cart_cache_key, cart_id, ex=86400)
@@ -365,8 +361,8 @@ class StrapiClient:
         try:
             response = requests.post(endpoint, headers=self.headers, json=payload, timeout=10)
             response.raise_for_status()
-            user_data = response.json()
-            user_id = user_data.get("documentId")
+            user = response.json()
+            user_id = user.get("documentId")
 
             if user_id:
                 self.db.set(user_cache_key, user_id, ex=86400)
