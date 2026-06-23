@@ -1,9 +1,10 @@
 from telegram.error import TelegramError
 
+from strapi_api import get_all_products
 from keyboards import get_main_menu_keyboard, get_about_keyboard, get_catalog_keyboard
 
 
-def render_main_menu(query) -> str:
+def render_main_menu(query):
     """Edits message to show the main menu screen."""
     query.edit_message_text(
         text="👋 Добро пожаловать в наш Рыбный Магазин!\n\nВыберите опцию из меню ниже:",
@@ -12,7 +13,7 @@ def render_main_menu(query) -> str:
     return "MENU"
 
 
-def render_about(query) -> str:
+def render_about(query):
     """Edits message to show the About us screen."""
     text = (
         "🐟 *Рыбный Магазин «Свежий Улов»*\n\n"
@@ -31,9 +32,9 @@ def render_about(query) -> str:
     return "ABOUT"
 
 
-def render_catalog(update, context, query, strapi_client, send_new) -> str:
+def render_catalog(update, context, query, send_new, db, url, token):
     """Edits or sends a new message to show the product catalog screen."""
-    products = strapi_client.get_all_products()
+    products = get_all_products(db=db, url=url, token=token)
 
     if products:
         text = "📋 Наш ассортимент.\n\nВыберите интересующий товар для просмотра деталей:"
