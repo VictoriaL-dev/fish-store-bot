@@ -10,7 +10,8 @@ their shopping carts, and place orders directly from their phones.
 - [📁 Project Structure](#-project-structure)
 - [🛠️ Installation & Setup](#-installation--setup)
 - [🚀 Quick Start Guide](#-quick-start-guide)
-- [🔑 Strapi v5 Backend Configuration Guide](#-strapi-v5-backend-configuration-guide)
+- [📊 Database Models Architecture](#-database-models-architecture-strapi-v5)
+- [🔑 Strapi v5 Backend Configuration](#-strapi-v5-backend-configuration)
 - [🔐 Managing PostgreSQL via Adminer](#-managing-postgresql-via-adminer-docker-only)
 - [🔍 Inspecting Redis Data via Docker](#-inspecting-redis-data-via-docker)
 
@@ -155,7 +156,36 @@ python main.py
 Open Telegram, find your bot, and send the `/start` command.
 
 
-## 🔑 Strapi v5 Backend Configuration Guide
+## 📊 Database Models Architecture (Strapi v5)
+The database relies on a junction model (CartProduct) to handle a custom Many-to-Many relationship between Carts and Products, 
+allowing the bot to store unique metadata like product quantities.
+
+#### 1. User (System Model: users-permissions):
+Extends the standard Strapi user model to associate customers with their active sessions.
+- `username` (String) — Unique Telegram identifier.
+- `email` (Email) — Customer's email.
+- `password` (Password) — Auto-generated secure password.
+- `cart` (Relation) — Cart has many Users linkage.
+#### 2. Product:
+Stores the shop's assortment data.
+- `title` (String) — Name of the fish / seafood item.
+- `description` (Long Text) — Detailed product description.
+- `price` (Number) — Price per 1 kilogram.
+- `picture` (Media: Single Media) — Image file uploaded to the Media Library.
+- `cart_products` (Relation) — Product belongs to many CartProducts.
+#### 3. Cart:
+Maintains live Telegram user sessions.
+- `tg_id` (String / BigInt) — Unique Telegram Chat ID.
+- `users_permissions_users` (Relation) — Cart belongs to many Users.
+- `cart_products` (Relation) — Cart belongs to many CartProducts.
+#### 4. CartProduct (Junction Model):
+Acts as a pivot table to keep track of dynamic quantities for items inside specific carts.
+- `cart` (Relation) — Cart has many CartProducts.
+- `product` (Relation) — Product has many CartProducts.
+- `quantity` (Integer) — The weight of items added.
+
+
+## 🔑 Strapi v5 Backend Configuration
 To ensure the Telegram bot can successfully communicate with Strapi v5, you need to configure specific roles and 
 permissions in your Strapi Admin Panel [http://localhost:1337/admin](http://localhost:1337/admin).
 
