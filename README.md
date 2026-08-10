@@ -1,15 +1,21 @@
 # 🐟 Telegram Fish Store Bot
-A Telegram bot tailored for a fish store. This application bridges a sleek Telegram customer interface with a powerful 
-**Strapi CMS** backend for real-time inventory management, product updates, and order processing. By leveraging **Redis**, 
-the bot maintains lightning-fast user session states (FSM), allowing customers to seamlessly browse products, manage 
-their shopping carts, and place orders directly from their phones.
+An asynchronous Telegram bot tailored for a fish store. This application bridges a sleek 
+and highly interactive Telegram customer interface with a powerful `Strapi CMS` backend for real-time 
+inventory management, catalog distribution, and secure user processing. 
+
+By leveraging an asynchronous `Redis` connection pool, the bot manages independent customer session 
+states (FSM) and high-speed memory locks to guarantee a non-blocking user experience under request concurrency. 
+The entire network architecture is built on cooperative multitasking via `asyncio`, utilizing `aiohttp` 
+and `python-telegram-bot v22.x` to enable customers to seamlessly browse fresh product assortments, modify shopping carts, 
+and finalize order details dynamically right from their devices without structural I/O bottlenecks.
 
 
 ## 📌 Table of Contents
 - [⚙️ Tech Stack](#-tech-stack)
 - [📁 Project Structure](#-project-structure)
-- [🛠️ Installation & Setup](#-installation--setup)
+- [🛠️ Installation and Setup](#-installation-and-setup)
 - [🚀 Quick Start Guide](#-quick-start-guide)
+  - [Development Server Launch](#development-server-launch)
 - [📊 Database Models Architecture](#-database-models-architecture-strapi-v5)
 - [🔑 Strapi v5 Backend Configuration](#-strapi-v5-backend-configuration)
 - [🔐 Managing PostgreSQL via Adminer](#-managing-postgresql-via-adminer-docker-only)
@@ -17,67 +23,56 @@ their shopping carts, and place orders directly from their phones.
 
 
 ## ⚙️ Tech Stack
-- **Python 3.10+**: Core bot logic.
-- **Node.js v20/v22/v24**: Runtime environment for running the Strapi CMS backend.
-- **[Strapi](https://github.com/strapi/strapi) v5**: Headless CMS for managing products.
-- **Docker & Docker Compose**: For containerizing PostgreSQL and Redis services _(optional)_.
-- **Database**: Supports PostgreSQL (via Docker) and SQLite.
-- **python-telegram-bot v13.15**: Framework for Telegram Bot API.
-- **Redis**: In-memory data structure store for managing user conversation states (via Docker or local).
+- **Operating System:** Linux, macOS, or Windows (via WSL2)
+- **Language:** `Python 3.11+`
+- **Database**: `PostgreSQL` & `Redis` (via Docker)
+- **Configuration:** `pydantic-settings` & `pydantic`
+- **Backend:** `Node.js v24.x` & `Strapi`
+- **Async Telegram Bot Framework:** `python-telegram-bot v22.x`
+- **Async HTTP Framework:** `aiohttp`
+- **Containerization & Orchestration:** `Docker` & `Docker Compose`
 
 
 ## 📁 Project Structure
-After creation, your project should look like this:
 ```text
 .
-├── strapi/             # Strapi files
-│   ├── config/             # Strapi configuration files
-│   ├── database/           # Local database migration files
-│   ├── dist/               # Production build outputs
-│   ├── public/             # Static assets for Strapi
-│   ├── scripts/            # Automation and helper scripts
-│   ├── src/                # Strapi backend source code
-│   ├── types/              # TypeScript type definitions
-│   ├── package.json        # Node.js project manifest and Strapi dependencies
-│   ├── package-lock.json   # Locked versions of Node.js dependencies
-│   └── tsconfig.json       # TypeScript configuration
-├── database.py         # Connection pool setup for Redis
-├── keyboards.py        # Centralized module for reusable reply and inline menu button configurations
-├── screens.py          # Bot screens management and UI rendering
-├── strapi_api.py       # Client for executing requests against the Strapi REST API
-├── logging_config.py   # Logging configuration for the Python bot
-├── main.py             # Main entry point for the Python bot
-└── requirements.txt    # Python dependencies
+├── logs/                     # Dynamically generated application logs folder
+├── strapi/                   # Strapi files
+├── .env.example              # Example of environment variable configuration
+├── config.py                 # Central application settings mapper
+├── database.py               # Connection pool setup for Redis
+├── logging_config.py         # Non-blocking async queue logger
+├── keyboards.py              # Dynamic InlineKeyboardMarkup factories for navigation controls
+├── screens.py                # Interface rendering functions layer for message transitions
+├── handlers.py               # Core asynchronous FSM step handlers routing user navigation
+├── strapi_api.py             # Asynchronous Strapi CMS HTTP integration engine
+├── main.py                   # Main entry point for the Telegram bot
+├── docker-compose-dev.yaml   # Docker services orchestration
+└── requirements.txt          # Python dependencies
 ```
 
 
-## 🛠️ Installation & Setup
-
+## 🛠️ Installation and Setup
 ### Prerequisites:
 - [Node.js](https://nodejs.org/en) (v20, v22, or v24)
-- [Python](https://www.python.org/) (v3.10 or higher)
-- Redis server (running [locally](https://redis-docs.ru/operate/oss_and_stack/install/install-redis/) or via [Docker](https://www.docker.com/products/docker-desktop/))
+- [Python](https://www.python.org/) (v3.11 or higher)
+- [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (if you're on Windows and plan to use Docker Compose)
+- Redis server (running [locally](https://redis-docs.ru/operate/oss_and_stack/install/install-redis/) or via [Docker Desktop](https://www.docker.com/products/docker-desktop/))
 - Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Basic knowledge of [Strapi CMS](https://docs.strapi.io/cms/quick-start)
 - Strapi API [token](https://docs.strapi.io/cms/features/api-tokens)
 
-### Common Setup:
+### Basic Setup:
 #### 1. Clone the repository:
 ```bash
-git clone https://github.com/VictoriaL-dev/fish-store-bot.git
-cd fish-store-bot
+git clone https://github.com/...
+cd project-directory
 ```
 
 #### 2. Configure environment variables:
-Create a `.env` file in the root directory based on `.env.example` and fill in the variables for PostgreSQL if you plan 
-to run it through Docker, or leave them blank:
+Create a `.env` file in the root directory based on `.env.example` and fill in the variables for `PostgreSQL` if you plan 
+to run it through `Docker`, or leave them blank:
 ```dotenv
-# Strapi API
-STRAPI_TOKEN=your_full_access_or_custom_token
-STRAPI_URL=http://localhost:1337
-STRAPI_USER_ROLE=1  # Authenticated user role id
-STRAPI_USER_PASSWORD=your_password_for_strapi_user_creation
-
 # PostgreSQL
 DATABASE_PORT=5433
 DATABASE_NAME=postgres_db
@@ -92,6 +87,15 @@ REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=your_redis_password
 
+# Logging
+LOG_LEVEL=INFO
+
+# Strapi API
+STRAPI_TOKEN=your_full_access_or_custom_token
+STRAPI_URL=http://localhost:1337
+STRAPI_USER_ROLE=1  # Authenticated user role id
+STRAPI_USER_PASSWORD=your_password_for_strapi_user_creation
+
 # Telegram
 TG_BOT_TOKEN=your_bot_token
 ```
@@ -100,16 +104,16 @@ TG_BOT_TOKEN=your_bot_token
 #### 1. Initialize a new Strapi project:
 From the root directory, create a Strapi app inside the `strapi` folder:
 ```bash
-cd fish-store-bot
+cd project-directory
 npx create-strapi-app@5.48.1 strapi
 ```
 
 #### 2. Configure environment variables in `strapi/.env`:
-In the automatically created `.env` file in the `strapi` folder configure your database choice (toggle between `sqlite` and `postgres`).
+In the automatically created `.env` file in the `strapi` folder configure your database choice.
 Make sure the database variables in `strapi/.env` and the root `.env` match:
 ```dotenv
 # Database
-DATABASE_CLIENT=postgres  # Replace with 'sqlite' if you don't plan to use PostgreSQL
+DATABASE_CLIENT=postgres
 DATABASE_HOST=127.0.0.1
 DATABASE_PORT=5433
 DATABASE_NAME=fish_store
@@ -132,12 +136,12 @@ pip install -r requirements.txt
 
 
 ## 🚀 Quick Start Guide
-
 ### Development Server Launch
-#### 1. Spin up PostgreSQL and Redis using Docker _(or, if you're not using Docker, SQLite and locally running Redis instead)_:
+#### 1. Spin up PostgreSQL and Redis using Docker:
 ```bash
 docker-compose -f docker-compose-dev.yaml up -d
 ```
+> ℹ️ _Note: Wait a few seconds for the database healthcheck to pass before proceeding._
 
 #### 2. Start the Strapi development server:
 ```bash
@@ -160,25 +164,25 @@ Open Telegram, find your bot, and send the `/start` command.
 The database relies on a junction model (CartProduct) to handle a custom Many-to-Many relationship between Carts and Products, 
 allowing the bot to store unique metadata like product quantities.
 
-#### 1. User (System Model: users-permissions):
+#### 1. User (System Model: users-permissions)
 Extends the standard Strapi user model to associate customers with their active sessions.
 - `username` (String) — Unique Telegram identifier.
 - `email` (Email) — Customer's email.
 - `password` (Password) — Auto-generated secure password.
 - `cart` (Relation) — Cart has many Users linkage.
-#### 2. Product:
+#### 2. Product
 Stores the shop's assortment data.
 - `title` (String) — Name of the fish / seafood item.
 - `description` (Long Text) — Detailed product description.
 - `price` (Number) — Price per 1 kilogram.
 - `picture` (Media: Single Media) — Image file uploaded to the Media Library.
 - `cart_products` (Relation) — Product belongs to many CartProducts.
-#### 3. Cart:
+#### 3. Cart
 Maintains live Telegram user sessions.
 - `tg_id` (String / BigInt) — Unique Telegram Chat ID.
 - `users_permissions_users` (Relation) — Cart belongs to many Users.
 - `cart_products` (Relation) — Cart belongs to many CartProducts.
-#### 4. CartProduct (Junction Model):
+#### 4. CartProduct (Junction Model)
 Acts as a pivot table to keep track of dynamic quantities for items inside specific carts.
 - `cart` (Relation) — Cart has many CartProducts.
 - `product` (Relation) — Product has many CartProducts.
@@ -192,17 +196,17 @@ permissions in your Strapi Admin Panel [http://localhost:1337/admin](http://loca
 ### How to Find the Authenticated Role ID
 When the bot automatically registers a new customer using their email during checkout, it forces Strapi to assign them 
 to a default system role (typically Authenticated). To find the exact ID of this role for your strapi_api configuration:
-#### 1. Navigate to Settings ➔ Roles (under the Users & Permissions Plugin section).
-#### 2. Click on the Authenticated role to open its settings.
-#### 3. Look at your browser's address bar. The URL will end with a specific number (e.g., `.../users-permissions/roles/1`).
-#### 4. This number is your Authenticated Role ID. Set this value in your `.env` file.
+1. Navigate to Settings ➔ Roles (under the Users & Permissions Plugin section).
+2. Click on the Authenticated role to open its settings.
+3. Look at your browser's address bar. The URL will end with a specific number (e.g., `.../users-permissions/roles/1`).
+4. This number is your Authenticated Role ID. Set this value in your `.env` file.
 
 ### Permissions Required for a Custom API Token or Full Access Token
 If you are connecting your Telegram bot to Strapi using a Custom API Token (generated via Settings ➔ API Tokens with 
 token type set to Custom), you must explicitly check the boxes for the following permissions at the bottom of the token 
 settings page:
 
-#### 📦 Core Store Models (Custom Content-Types):
+#### 📦 Core Store Models (Custom Content-Types)
 `Cart`:
   - find (allows checking if a user already has a shopping cart)
   - create (allows creating a new shopping cart for a first-time user)
@@ -219,7 +223,7 @@ settings page:
   - findOne (allows opening a detailed product description card)
 
 #### 👥 System Models (Advanced Plugins):
-`Users-Permissions` (under the User subsection):
+`Users-Permissions` (under the User subsection)
   - find (allows looking up if a customer's email is already registered)
   - create (allows registering a new user profile with their email during checkout)
 
@@ -229,7 +233,7 @@ settings page:
 
 ## 🔐 Managing PostgreSQL via Adminer (Docker only)
 This project includes `Adminer`, a lightweight and fast database management interface available via web browser. It 
-is configured to run inside a Docker container alongside PostgreSQL.
+is configured to run inside a `Docker` container alongside `PostgreSQL`.
 
 ### How to Access Adminer
 #### 1. Make sure your Docker container is running:
@@ -250,15 +254,17 @@ docker-compose -f docker-compose-dev.yaml up -d
 #### 1. Access the Redis container CLI.
 Run the following command to open the interactive Redis CLI inside your running container:
 ```bash
-docker-compose -f docker-compose-dev.yaml exec redis redis-cli
+docker compose -f docker-compose-dev.yaml exec redis redis-cli
+127.0.0.1:6379> AUTH <your_redis_password>
 ```
 
-#### 2. Authenticate:
-```text
-127.0.0.1:6379> AUTH your_redis_password
+Or you can log in via the CLI arguments:
+```bash
+docker compose -f docker-compose-dev.yaml exec redis redis-cli -a <your_redis_password>
 ```
+> ⚠️ _Use this command only for local development._
 
-#### 3. Useful Redis commands.
+#### 2. Useful Redis commands.
 Once inside the CLI, you can use these basic commands to inspect the bot's state:
 - `KEYS *` - List all keys currently stored in the database.
 - `GET <key>` - View the content of a specific text key.
@@ -268,5 +274,5 @@ Once inside the CLI, you can use these basic commands to inspect the bot's state
 - `FLUSHDB` - Clear all data from current database.
 - `FLUSHALL` - Clear all data from all databases.
 
-#### 4. Exit the CLI.
+#### 3. Exit the CLI.
 Type `exit` or press `Ctrl + C` to return to your local terminal.

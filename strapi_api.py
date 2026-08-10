@@ -1,23 +1,20 @@
 import json
 import logging
 from io import BytesIO
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 
-import requests
-from requests.exceptions import RequestException
+import aiohttp
+from aiohttp import ClientError
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("bot.strapi")
 
 
-def get_all_products(db, url, token):
+async def get_all_products(session, db, url, token):
     """Requests a list of all products from Strapi and caches them.
 
-    Attempts to fetch the products from the Redis cache first. If not cached,
-    sends a GET request to the Strapi API, stores the results in Redis with
-    a 15-minute expiration time, and returns the data.
-
     Args:
-        db (redis.Redis): The Redis client to use for storing cached products.
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        db (redis.asyncio.Redis): The Redis client to use for storing cached products.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
 
@@ -27,7 +24,7 @@ def get_all_products(db, url, token):
     """
     products_cache_key = "strapi:products"
 
-    cached_products = db.get(products_cache_key)
+    cached_products = await db.get(products_cache_key)
     if cached_products:
         return json.loads(cached_products)
 
@@ -35,28 +32,27 @@ def get_all_products(db, url, token):
     endpoint = f"{url}/api/products"
 
     try:
-        response = requests.get(endpoint, headers=headers, timeout=10)
-        response.raise_for_status()
-        products = response.json().get("data", [])
-        db.set(products_cache_key, json.dumps(products), ex=900)
-        return products
-    except RequestException as e:
-        logger.error(f"An error occurred while requesting products: {e}")
+        async with session.get(endpoint, headers=headers, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            products = response_json.get("data", [])
+
+            if products:
+                await db.set(products_cache_key, json.dumps(products), ex=900)
+                return products
+    except ClientError as e:
+        logger.error(f"Failed to request products: {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while requesting products: {e}")
+        logger.exception(f"Unexpected error while requesting products: {e}")
     return []
 
 
-def get_product_by_id(db, url, token, product_id):
+async def get_product_by_id(session, db, url, token, product_id):
     """Requests a single product from Strapi by its documentId along with its media data.
 
-    Checks the Redis cache for the product data first. If not found, sends a
-    GET request to the Strapi API with the `populate=*` query parameter to
-    fetch the product and its relations. Stores the response in Redis with
-    a 15-minute expiration time.
-
     Args:
-        db (redis.Redis): The Redis client to use for storing cached product.
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        db (redis.asyncio.Redis): The Redis client to use for storing cached product.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
         product_id (str): The unique document identifier of the product.
@@ -67,7 +63,7 @@ def get_product_by_id(db, url, token, product_id):
     """
     product_cache_key = f"strapi:product:{product_id}"
 
-    cached_product = db.get(product_cache_key)
+    cached_product = await db.get(product_cache_key)
     if cached_product:
         return json.loads(cached_product)
 
@@ -76,32 +72,32 @@ def get_product_by_id(db, url, token, product_id):
     params = {"populate": "*"}
 
     try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        product = response.json().get("data", {})
-        db.set(product_cache_key, json.dumps(product), ex=900)
-        return product
-    except RequestException as e:
-        logger.error(f"An error occurred while requesting product_{product_id}: {e}")
+        async with session.get(endpoint, headers=headers, params=params, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            product = response_json.get("data", {})
+
+            if product:
+                await db.set(product_cache_key, json.dumps(product), ex=900)
+                return product
+    except ClientError as e:
+        logger.error(f"Failed to request product: {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while requesting product_{product_id}: {e}")
+        logger.exception(f"Unexpected error while requesting product: {e}")
     return {}
 
 
 def parse_product(url, product):
     """Parses JSON from Strapi and returns a tuple with the caption and full image url.
 
-    Extracts the title, description, price, and media details from the provided
-    product dictionary.
-
     Args:
         url (str): The Strapi API endpoint URL.
         product (dict): A dictionary containing product attributes retrieved from Strapi.
 
     Returns:
-        tuple: A tuple containing two elements:
-            1) caption (str): Formatted string with product details.
-            2) full_image_url (str or None): Complete URL to the image, or None if no picture data is found.
+        tuple [str, str | None]: A two-element tuple containing:
+            - caption (str): Formatted string with product details.
+            - full_image_url (str or None): Complete URL to the image, or None if no picture data is found.
     """
     title = product.get("title", "Название отсутствует")
     description = product.get("description", "Описание отсутствует")
@@ -115,26 +111,23 @@ def parse_product(url, product):
 
     picture = product.get("picture")
     if isinstance(picture, dict):
-        image_url_relative = picture.get("url")
-        full_image_url = f"{url}{image_url_relative}" if image_url_relative else None
+        relative_image_url = picture.get("url")
+        full_image_url = f"{url}{relative_image_url}" if relative_image_url else None
     else:
         full_image_url = None
     return caption, full_image_url
 
 
-@contextmanager
-def download_product_image(image_url):
+@asynccontextmanager
+async def download_product_image(session, image_url):
     """Downloads an image from Strapi and yields a BytesIO object ready for Telegram.
 
-    Fetches the image data via a GET request, wraps it in a BytesIO stream,
-    and automatically ensures the stream is closed after the context exits.
-
     Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
         image_url (str): The absolute URL of the image to download.
 
-    Returns:
-        BytesIO or None:
-            The downloaded image stream, or None if the operation fails.
+    Yields:
+        BytesIO or None: The downloaded image stream, or None if the operation fails.
     """
     if not image_url:
         yield None
@@ -143,42 +136,39 @@ def download_product_image(image_url):
     photo_file = None
 
     try:
-        response = requests.get(image_url, timeout=10)
-        response.raise_for_status()
-        photo_file = BytesIO(response.content)
-        photo_file.name = "fish.jpg"
-        yield photo_file
-    except RequestException as e:
-        logger.error(f"Failed to download image from URL {image_url}: {e}")
+        async with session.get(image_url, timeout=5) as response:
+            response.raise_for_status()
+            content = await response.read()
+            photo_file = BytesIO(content)
+            photo_file.name = "product.jpg"
+            yield photo_file
+    except ClientError as e:
+        logger.error(f"Failed to download image: {e}")
         yield None
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while downloading image from URL {image_url}: {e}")
+        logger.exception(f"Unexpected error while downloading image: {e}")
         yield None
     finally:
         if photo_file:
             photo_file.close()
 
 
-def get_or_create_cart(db, url, token, tg_id):
+async def get_or_create_cart(session, db, url, token, tg_id):
     """Gets existing cart documentId or creates a new one for the Telegram user.
 
-    First, checks the Redis cache for the user's cart ID. If not found,
-    queries Strapi using a filter by `tg_id`. If the cart exists in Strapi,
-    it caches and returns the ID. If no cart exists, sends a POST request
-    to Strapi to create a new cart, then caches and returns its new ID.
-
     Args:
-        db (redis.Redis): The Redis client to use for storing cached cart document identifier.
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        db (redis.asyncio.Redis): The Redis client to use for storing cached cart document identifier.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
         tg_id (int): The unique Telegram user identifier.
 
     Returns:
-        str: The cart document identifier, or an empty string if operation fails.
+        str | None: The cart document identifier, or None if operation fails.
     """
     cart_cache_key = f"strapi:user:{tg_id}:cart-id"
 
-    cached_cart_id = db.get(cart_cache_key)
+    cached_cart_id = await db.get(cart_cache_key)
     if cached_cart_id:
         return cached_cart_id
 
@@ -187,39 +177,43 @@ def get_or_create_cart(db, url, token, tg_id):
     params = {"filters[tg_id][$eq]": str(tg_id)}
 
     try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        carts = response.json().get("data", [])
-        cart_id = carts[0].get("documentId")
+        async with session.get(endpoint, headers=headers, params=params, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            carts = response_json.get("data", [])
 
-        if cart_id:
-            db.set(cart_cache_key, cart_id, ex=86400)
-            return cart_id
-    except (RequestException, Exception):
+            if carts:
+                cart_id = carts[0].get("documentId")
+                if cart_id:
+                    await db.set(cart_cache_key, cart_id, ex=86400)
+                    return cart_id
+    except (ClientError, Exception):
         pass
 
     payload = {"data": {"tg_id": str(tg_id)}}
 
     try:
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-        cart = response.json().get("data", {})
-        cart_id = cart.get("documentId")
+        async with session.post(endpoint, headers=headers, json=payload, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            cart = response_json.get("data", {})
+            cart_id = cart.get("documentId")
 
-        if cart_id:
-            db.set(cart_cache_key, cart_id, ex=86400)
-            return cart_id
-    except RequestException as e:
-        logger.error(f"An error occurred while creating user's cart for tg_id {tg_id}: {e}")
+            if cart_id:
+                await db.set(cart_cache_key, cart_id, ex=86400)
+                return cart_id
+    except ClientError as e:
+        logger.error(f"Failed to create user's cart for tg id '{tg_id}': {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while creating user's cart for tg_id {tg_id}: {e}")
-    return ""
+        logger.exception(f"Unexpected error while creating user's cart for tg id '{tg_id}': {e}")
+    return None
 
 
-def get_cart_details(url, token, cart_id):
+async def get_cart_details(session, url, token, cart_id):
     """Fetches all items in the cart by its documentId with pre-populated product data.
 
     Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
         cart_id (str): The unique document identifier of the cart.
@@ -235,21 +229,23 @@ def get_cart_details(url, token, cart_id):
     }
 
     try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        cart_products = response.json().get("data", [])
-        return cart_products
-    except RequestException as e:
-        logger.error(f"An error occurred while requesting user's cart products for cart {cart_id}: {e}")
+        async with session.get(endpoint, headers=headers, params=params, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            cart_products = response_json.get("data", [])
+            return cart_products
+    except ClientError as e:
+        logger.error(f"Failed to request user's cart products: {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while requesting user's cart products for cart {cart_id}: {e}")
+        logger.exception(f"Unexpected error while requesting user's cart products: {e}")
     return []
 
 
-def add_product_to_cart(url, token, cart_id, product_id):
+async def add_product_to_cart(session, url, token, cart_id, product_id):
     """Adds a product to the cart or increments its quantity if it already exists.
 
     Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
         cart_id (str): The unique document identifier of the cart.
@@ -266,56 +262,44 @@ def add_product_to_cart(url, token, cart_id, product_id):
     }
 
     try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        cart_product = response.json().get("data", [])
-    except RequestException as e:
-        logger.error(f"Failed to check existing cart products for cart {cart_id}: {e}")
-        return False
-    except Exception as e:
-        logger.exception(f"An unexpected error occurred while checking existing cart products for cart {cart_id}: {e}")
-        return False
+        async with session.get(endpoint, headers=headers, params=params, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            cart_products = response_json.get("data", [])
 
-    if cart_product:
-        cart_product_id = cart_product[0].get("documentId")
-        current_quantity = cart_product[0].get("quantity", 1)
+        if cart_products:
+            cart_product_id = cart_products[0].get("documentId")
+            current_quantity = cart_products[0].get("quantity", 1)
 
-        update_endpoint = f"{url}/api/cart-products/{cart_product_id}"
-        payload = {"data": {"quantity": current_quantity + 1}}
+            update_endpoint = f"{url}/api/cart-products/{cart_product_id}"
+            payload = {"data": {"quantity": current_quantity + 1}}
 
-        try:
-            requests.put(update_endpoint, headers=headers, json=payload, timeout=10).raise_for_status()
-            return True
-        except RequestException as e:
-            logger.error(f"Failed to update product quantity for cart product {cart_product_id}: {e}")
-        except Exception as e:
-            logger.exception(f"An unexpected error occurred while trying to update product quantity {cart_product_id}: {e}")
-        return False
-    else:
-        payload = {
-            "data": {
-                "quantity": 1,
-                "cart": cart_id,
-                "product": product_id
+            async with session.put(update_endpoint, headers=headers, json=payload, timeout=5) as response:
+                response.raise_for_status()
+                return True
+        else:
+            payload = {
+                "data": {
+                    "quantity": 1,
+                    "cart": cart_id,
+                    "product": product_id
+                }
             }
-        }
-
-        try:
-            requests.post(endpoint, headers=headers, json=payload, timeout=10).raise_for_status()
-            return True
-        except RequestException as e:
-            logger.error(f"Failed to create new cart product {product_id} for cart {cart_id}: {e}")
-        except Exception as e:
-            logger.exception(
-                f"An unexpected error occurred while trying to add new product {product_id} to cart {cart_id}: {e}"
-            )
-        return False
+            async with session.post(endpoint, headers=headers, json=payload, timeout=5) as response:
+                response.raise_for_status()
+                return True
+    except ClientError as e:
+        logger.error(f"Failed to manage cart product for cart '{cart_id}': {e}")
+    except Exception as e:
+        logger.exception(f"Unexpected error while managing cart product for cart '{cart_id}': {e}")
+    return False
 
 
-def remove_cart_product(url, token, cart_product_id):
+async def remove_cart_product(session, url, token, cart_product_id):
     """Deletes a specific cart product by its documentId.
 
     Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
         cart_product_id (str): The unique document identifier of the cart product.
@@ -327,54 +311,59 @@ def remove_cart_product(url, token, cart_product_id):
     endpoint = f"{url}/api/cart-products/{cart_product_id}"
 
     try:
-        requests.delete(endpoint, headers=headers, timeout=10).raise_for_status()
-        return True
-    except RequestException as e:
-        logger.error(f"Failed to delete cart product {cart_product_id}: {e}")
+        async with session.delete(endpoint, headers=headers, timeout=5) as response:
+            response.raise_for_status()
+            return True
+    except ClientError as e:
+        logger.error(f"Failed to delete cart product '{cart_product_id}': {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while trying to delete cart product {cart_product_id}: {e}")
+        logger.exception(f"Unexpected error while trying to delete cart product '{cart_product_id}': {e}")
     return False
 
 
-def get_or_create_user(db, url, token, user_role, user_password, email, tg_id):
-    """Finds a user by email or creates a new one.
+async def get_or_create_user(session, db, url, token, user_role, user_password,
+                             email, tg_id):
+    """Finds a user by username or creates a new one.
 
     Args:
-        db (redis.Redis): The Redis client to use for storing cached user document identifier.
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        db (redis.asyncio.Redis): The Redis client to use for storing cached user document identifier.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
-        user_role (str): The Strapi Authenticated user role ID.
+        user_role (int): The Strapi Authenticated user role ID.
         user_password (str): The password for automatic user creation.
-        email (str): The email address of the user.
+        email (str | None): The email address of the user.
         tg_id (int): The unique Telegram user identifier.
 
     Returns:
-        str: The user document identifier, or an empty string if the operation fails.
+        str | None: The user document identifier, or None if the operation fails.
     """
-    user_cache_key = f"strapi:user:{email}:user-id"
+    user_cache_key = f"strapi:user:{tg_id}:user-id"
 
-    cached_user_id = db.get(user_cache_key)
+    cached_user_id = await db.get(user_cache_key)
     if cached_user_id:
         return cached_user_id
 
+    username = f"tg_{tg_id}"
     headers = {"Authorization": f"Bearer {token}"}
     endpoint = f"{url}/api/users"
-    params = {"filters[email][$eq]": email}
+    params = {"filters[username][$eq]": username}
 
     try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        users = response.json()
-        user_id = users[0].get("documentId")
+        async with session.get(endpoint, headers=headers, params=params, timeout=5) as response:
+            response.raise_for_status()
+            users = await response.json()
 
-        if user_id:
-            db.set(user_cache_key, user_id, ex=86400)
-            return user_id
-    except (RequestException, Exception):
+            if users:
+                user_id = users[0].get("documentId")
+                if user_id:
+                    await db.set(user_cache_key, user_id, ex=86400)
+                    return user_id
+    except (ClientError, Exception):
         pass
 
     payload = {
-        "username": f"tg_{tg_id}",
+        "username": username,
         "email": email,
         "password": user_password,
         "confirmed": True,
@@ -382,25 +371,26 @@ def get_or_create_user(db, url, token, user_role, user_password, email, tg_id):
     }
 
     try:
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-        user = response.json()
-        user_id = user.get("documentId")
+        async with session.post(endpoint, headers=headers, json=payload, timeout=5) as response:
+            response.raise_for_status()
+            user = await response.json()
+            user_id = user.get("documentId")
 
-        if user_id:
-            db.set(user_cache_key, user_id, ex=86400)
-            return user_id
-    except RequestException as e:
-        logger.error(f"Failed to create new user with email {email}: {e}")
+            if user_id:
+                await db.set(user_cache_key, user_id, ex=86400)
+                return user_id
+    except ClientError as e:
+        logger.error(f"Failed to create new user for tg id '{tg_id}': {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while creating new user with email {email}: {e}")
-    return ""
+        logger.exception(f"Unexpected error while creating new user for tg id '{tg_id}': {e}")
+    return None
 
 
-def link_user_to_cart(url, token, cart_id, user_id):
+async def link_user_to_cart(session, url, token, cart_id, user_id):
     """Links the Strapi user to the specific cart.
 
     Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
         cart_id (str): The unique document identifier of the cart.
@@ -413,15 +403,16 @@ def link_user_to_cart(url, token, cart_id, user_id):
     endpoint = f"{url}/api/carts/{cart_id}"
     payload = {
         "data": {
-            "users_permissions_users": [user_id]
+            "user": user_id
         }
     }
 
     try:
-        requests.put(endpoint, headers=headers, json=payload, timeout=10).raise_for_status()
-        return True
-    except RequestException as e:
-        logger.error(f"Failed to link user {user_id} to cart {cart_id}: {e}")
+        async with session.put(endpoint, headers=headers, json=payload, timeout=5) as response:
+            response.raise_for_status()
+            return True
+    except ClientError as e:
+        logger.error(f"Failed to link user '{user_id}' to cart '{cart_id}': {e}")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred while trying to link user {user_id} to cart {cart_id}: {e}")
+        logger.exception(f"Unexpected error while trying to link user '{user_id}' to cart '{cart_id}': {e}")
     return False

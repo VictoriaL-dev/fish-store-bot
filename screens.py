@@ -4,17 +4,33 @@ from strapi_api import get_all_products
 from keyboards import get_main_menu_keyboard, get_about_keyboard, get_catalog_keyboard
 
 
-def render_main_menu(query):
-    """Edits message to show the main menu screen."""
-    query.edit_message_text(
+async def render_main_menu(query):
+    """Edits the current message to display the main menu screen.
+
+    Args:
+        query (telegram.CallbackQuery): The callback query that triggered
+            this screen update.
+
+    Returns:
+        str: The next FSM state identifier 'MENU'.
+    """
+    await query.edit_message_text(
         text="👋 Добро пожаловать в наш Рыбный Магазин!\n\nВыберите опцию из меню ниже:",
         reply_markup=get_main_menu_keyboard()
     )
     return "MENU"
 
 
-def render_about(query):
-    """Edits message to show the About us screen."""
+async def render_about(query):
+    """Edits the current message to display the 'About us' and contacts screen.
+
+    Args:
+        query (telegram.CallbackQuery): The callback query that triggered
+            this screen update.
+
+    Returns:
+        str: The next FSM state identifier 'ABOUT'.
+    """
     text = (
         "🐟 *Рыбный Магазин «Свежий Улов»*\n\n"
         "Мы поставляем самую свежую рыбу и морепродукты напрямую с Камчатки и Мурманска. "
@@ -24,7 +40,7 @@ def render_about(query):
         "⏰ *Режим работы:* Ежедневно с 09:00 до 21:00\n\n"
         "Выберите интересующий раздел ниже, чтобы продолжить:"
     )
-    query.edit_message_text(
+    await query.edit_message_text(
         text=text,
         reply_markup=get_about_keyboard(),
         parse_mode="Markdown"
@@ -32,9 +48,25 @@ def render_about(query):
     return "ABOUT"
 
 
-def render_catalog(update, context, query, send_new, db, url, token):
-    """Edits or sends a new message to show the product catalog screen."""
-    products = get_all_products(db=db, url=url, token=token)
+async def render_catalog(update, context, query, send_new):
+    """Edits or sends a new message to show the product catalog screen.
+
+    Args:
+        update (telegram.Update): The current Telegram update object.
+        context (telegram.ext.ContextTypes.DEFAULT_TYPE): The current callback context.
+        query (telegram.CallbackQuery): The callback query that triggered this screen.
+        send_new (bool): If True, deletes the old message and sends a new one;
+            otherwise, edits the existing message text.
+
+    Returns:
+        str: The next FSM state identifier 'CATALOG'.
+    """
+    redis_db = context.bot_data["redis_db"]
+    url = context.bot_data["strapi_url"]
+    token = context.bot_data["strapi_token"]
+    session = context.bot_data["http_session"]
+
+    products = await get_all_products(session=session, db=redis_db, url=url, token=token)
 
     if products:
         text = "📋 Наш ассортимент.\n\nВыберите интересующий товар для просмотра деталей:"
@@ -45,15 +77,15 @@ def render_catalog(update, context, query, send_new, db, url, token):
 
     if send_new:
         try:
-            query.message.delete()
+            await query.delete_message()
         except TelegramError:
             pass
 
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
             reply_markup=reply_markup
         )
     else:
-        query.edit_message_text(text=text, reply_markup=reply_markup)
+        await query.edit_message_text(text=text, reply_markup=reply_markup)
     return "CATALOG"
