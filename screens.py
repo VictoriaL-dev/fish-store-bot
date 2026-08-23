@@ -1,7 +1,7 @@
 from telegram.error import TelegramError
 
 from strapi_api import get_all_products
-from keyboards import get_main_menu_keyboard, get_about_keyboard, get_catalog_keyboard
+from keyboards import get_main_menu_keyboard, get_basic_keyboard, get_catalog_keyboard
 
 
 async def render_main_menu(query):
@@ -42,7 +42,7 @@ async def render_about(query):
     )
     await query.edit_message_text(
         text=text,
-        reply_markup=get_about_keyboard(),
+        reply_markup=get_basic_keyboard(),
         parse_mode="Markdown"
     )
     return "ABOUT"

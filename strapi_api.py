@@ -1,4 +1,5 @@
 import json
+import secrets
 import logging
 from io import BytesIO
 from contextlib import asynccontextmanager
@@ -340,9 +341,10 @@ async def get_or_create_user(session, db, url, token, user_role, user_password,
     """
     user_cache_key = f"strapi:user:{tg_id}:user-id"
 
-    cached_user_id = await db.get(user_cache_key)
-    if cached_user_id:
-        return cached_user_id
+    if email is None:
+        cached_user_id = await db.get(user_cache_key)
+        if cached_user_id:
+            return cached_user_id
 
     username = f"tg_{tg_id}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -355,34 +357,47 @@ async def get_or_create_user(session, db, url, token, user_role, user_password,
             users = await response.json()
 
             if users:
-                user_id = users[0].get("documentId")
-                if user_id:
-                    await db.set(user_cache_key, user_id, ex=86400)
-                    return user_id
+                existing_user = users[0]
+                user_document_id = existing_user.get("documentId")
+                current_email = existing_user.get("email")
+                user_id = existing_user.get("id")
+
+                if email is not None:
+                    if current_email != email and user_id:
+                        update_endpoint = f"{url}/api/users/{user_id}"
+                        update_payload = {"email": email}
+
+                        async with session.put(update_endpoint, headers=headers, json=update_payload, timeout=5) as resp:
+                            resp.raise_for_status()
+                            logger.debug(f"Successfully updated email for user '{username}' to '{email}'.")
+                if user_document_id:
+                    await db.set(user_cache_key, user_document_id, ex=86400)
+                    return user_document_id
     except (ClientError, Exception):
         pass
 
-    payload = {
-        "username": username,
-        "email": email,
-        "password": user_password,
-        "confirmed": True,
-        "role": user_role
-    }
+    if email is not None:
+        payload = {
+            "username": username,
+            "email": email,
+            "password": user_password,
+            "confirmed": True,
+            "role": user_role
+        }
 
-    try:
-        async with session.post(endpoint, headers=headers, json=payload, timeout=5) as response:
-            response.raise_for_status()
-            user = await response.json()
-            user_id = user.get("documentId")
+        try:
+            async with session.post(endpoint, headers=headers, json=payload, timeout=5) as response:
+                response.raise_for_status()
+                user = await response.json()
+                user_id = user.get("documentId")
 
-            if user_id:
-                await db.set(user_cache_key, user_id, ex=86400)
-                return user_id
-    except ClientError as e:
-        logger.error(f"Failed to create new user for tg id '{tg_id}': {e}")
-    except Exception as e:
-        logger.exception(f"Unexpected error while creating new user for tg id '{tg_id}': {e}")
+                if user_id:
+                    await db.set(user_cache_key, user_id, ex=86400)
+                    return user_id
+        except ClientError as e:
+            logger.error(f"Failed to create new user for tg id '{tg_id}': {e}")
+        except Exception as e:
+            logger.exception(f"Unexpected error while creating new user for tg id '{tg_id}': {e}")
     return None
 
 
@@ -416,3 +431,115 @@ async def link_user_to_cart(session, url, token, cart_id, user_id):
     except Exception as e:
         logger.exception(f"Unexpected error while trying to link user '{user_id}' to cart '{cart_id}': {e}")
     return False
+
+
+async def create_order(session, url, token, user_id, phone_number, cart_products):
+    """Creates a new order record in Strapi and links it to the user and products.
+
+    Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        url (str): The Strapi API endpoint URL.
+        token (str): The Strapi API token to use.
+        user_id (str): The unique document identifier of the Strapi user.
+        phone_number (str): The customer's validated phone number.
+        cart_products (list): A list of the products being ordered.
+
+    Returns:
+        bool: True if the order was successfully created, False otherwise.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"{url}/api/orders"
+
+    order_id = f"ORD-{secrets.token_hex(4)}"
+
+    serialized_items = []
+    for item in cart_products:
+        product = item.get("product", {})
+        serialized_items.append({
+            "title": product.get("title", "Товар"),
+            "price": product.get("price", 0),
+            "quantity": item.get("quantity", 1)
+        })
+
+    payload = {
+        "data": {
+            "order_id": order_id,
+            "phone_number": phone_number,
+            "active": True,
+            "users_permissions_user": user_id,
+            "order_items": json.dumps(serialized_items, indent=2, ensure_ascii=False)
+        }
+    }
+
+    try:
+        async with session.post(endpoint, headers=headers, json=payload, timeout=5) as response:
+            response.raise_for_status()
+            return True
+    except ClientError as e:
+        logger.error(f"Failed to create order for user '{user_id}': {e}")
+    except Exception as e:
+        logger.exception(f"Unexpected error while creating order for user '{user_id}': {e}")
+    return False
+
+
+async def get_active_order(session, url, token, user_id):
+    """Fetches the current active order for a specific user.
+
+    Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        url (str): The Strapi API endpoint URL.
+        token (str): The Strapi API token to use.
+        user_id (str): The unique document identifier of the Strapi user.
+
+    Returns:
+        dict | None: The current active order if any, None otherwise.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"{url}/api/orders"
+    params = {
+        "filters[users_permissions_user][documentId][$eq]": user_id,
+        "filters[active][$eq]": "true"
+    }
+
+    try:
+        async with session.get(endpoint, headers=headers, params=params, timeout=5) as response:
+            response.raise_for_status()
+            response_json = await response.json()
+            orders = response_json.get("data", [])
+
+            if orders:
+                order = orders[0]
+                if order:
+                    return order
+    except ClientError as e:
+        logger.error(f"Failed to get active order for user '{user_id}': {e}")
+    except Exception as e:
+        logger.exception(f"Unexpected error while trying to get active order for user '{user_id}': {e}")
+    return None
+
+
+async def clear_cart(session, url, token, cart_products):
+    """Deletes all items from the cart in Strapi after order finalization.
+
+    Args:
+        session (aiohttp.ClientSession): The active asynchronous HTTP session.
+        url (str): The Strapi API endpoint URL.
+        token (str): The Strapi API token to use.
+        cart_products (list): A list of products in the cart.
+
+    Returns:
+        None: This coroutine does not return a value.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for product in cart_products:
+        product_id = product.get("documentId")
+        if product_id:
+            try:
+                endpoint = f"{url}/api/cart-products/{product_id}"
+                async with session.delete(endpoint, headers=headers, timeout=5) as response:
+                    response.raise_for_status()
+            except ClientError as e:
+                logger.error(f"Failed to delete cart product '{product_id}': {e}")
+            except Exception as e:
+                logger.exception(f"Unexpected error while trying to clear cart product '{product_id}': {e}")

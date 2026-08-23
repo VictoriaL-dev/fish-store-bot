@@ -1,24 +1,58 @@
-import re
 import json
 import logging
 
+import phonenumbers
+from email_validator import validate_email, EmailNotValidError
 from telegram.error import TimedOut, NetworkError, TelegramError
 
 from screens import render_main_menu, render_about, render_catalog
-from keyboards import get_main_menu_keyboard, get_product_keyboard, get_cart_keyboard
+from keyboards import get_main_menu_keyboard, get_basic_keyboard, get_product_keyboard, get_cart_keyboard
 from strapi_api import (
-    get_product_by_id,
-    parse_product,
-    download_product_image,
-    get_or_create_cart,
-    get_cart_details,
-    add_product_to_cart,
-    remove_cart_product,
-    get_or_create_user,
-    link_user_to_cart
+    get_product_by_id, parse_product, download_product_image,
+    get_or_create_cart, get_cart_details, add_product_to_cart,
+    remove_cart_product, get_or_create_user, link_user_to_cart,
+    create_order, get_active_order, clear_cart
 )
 
 logger = logging.getLogger("bot.handlers")
+
+
+def _validate_email_syntax(email):
+    """Validates the syntax of an email address using email-validator.
+
+    Args:
+        email (str): A string representing the email address to validate.
+
+    Returns:
+        str | None: The normalized email string if the syntax is valid, or None otherwise.
+    """
+    try:
+        email_info = validate_email(email, check_deliverability=False)
+        return email_info.normalized
+    except EmailNotValidError:
+        return None
+
+
+def _validate_and_format_phone(phone_number, default_region="RU"):
+    """Validates and formats a raw phone number string into E.164 format.
+
+    Args:
+        phone_number (str): A string representing the raw phone number.
+        default_region (str): A two-letter ISO country code. Defaults to 'RU'.
+
+    Returns:
+        str | None: The formatted phone number string in E.164 format (e.g., '+79991234567')
+        if valid, or None if the number is invalid or cannot be parsed.
+    """
+    try:
+        parsed_number = phonenumbers.parse(phone_number, default_region)
+
+        if phonenumbers.is_valid_number(parsed_number):
+            return phonenumbers.format_number(parsed_number, phonenumbers.PhoneNumberFormat.E164)
+        else:
+            return None
+    except phonenumbers.NumberParseException:
+        return None
 
 
 async def _start(update, context):
@@ -39,7 +73,7 @@ async def _start(update, context):
 
 
 async def _handle_main_menu(update, context):
-    """Handles the MENU state. Routes catalog, cart, and about actions.
+    """Handles the MENU state. Routes catalog, cart, about, and active order.
 
     Args:
         update (telegram.Update): The current Telegram update object.
@@ -60,13 +94,89 @@ async def _handle_main_menu(update, context):
     if query.data == "catalog":
         return await render_catalog(update=update, context=context, query=query, send_new=False)
 
-    if query.data == "cart":
-        return await _handle_cart(update=update, context=context)
-
     if query.data == "about":
         return await render_about(query=query)
 
+    if query.data == "cart":
+        return await _handle_cart(update=update, context=context)
+
+    if query.data == "active_order":
+        session = context.bot_data["http_session"]
+        redis_db = context.bot_data["redis_db"]
+        url = context.bot_data["strapi_url"]
+        token = context.bot_data["strapi_token"]
+        user_role = context.bot_data["strapi_user_role"]
+        user_password = context.bot_data["strapi_user_password"]
+        tg_id = update.effective_chat.id
+
+        strapi_user_id = await get_or_create_user(
+            session=session, db=redis_db, url=url, token=token,
+            user_role=user_role, user_password=user_password, email=None, tg_id=tg_id
+        )
+        if not strapi_user_id:
+            await query.answer("У вас еще нет истории заказов.", show_alert=True)
+            return "MENU"
+
+        active_order = await get_active_order(session=session, url=url, token=token, user_id=strapi_user_id)
+        if not active_order:
+            await query.answer("У вас нет активных заказов в обработке.", show_alert=True)
+            return "MENU"
+
+        products = active_order.get("order_items", [])
+        text = (f"📦 *Ваш активный заказ*\n\n"
+                f"*Номер:* {active_order.get('order_id')}\n"
+                f"*Статус:* в обработке ⏳\n"
+                f"*Телефон:* {active_order.get('phone_number')}\n\n"
+                f"*Состав заказа:*\n")
+
+        if products:
+            total = 0
+            for index, product in enumerate(products, 1):
+                cost = product["price"] * product["quantity"]
+                total += cost
+                text += f"{index}. {product['title']} - {product['quantity']} кг х {product['price']} руб. = {cost} руб.\n"
+            text += (f"\n*Итого к оплате:* {total} руб.\n\n"
+                     f"ℹ Для уточнения деталей заказа можете связаться с менеджером по телефону: +7-999-123-45-67")
+        else:
+            text += ("Не удалось получить данные о заказе...\n\n"
+                     "ℹ Для уточнения деталей заказа можете связаться с менеджером по телефону: +7-999-123-45-67")
+
+        await query.edit_message_text(
+            text=text,
+            reply_markup=get_basic_keyboard(),
+            parse_mode="Markdown"
+        )
+        return "ACTIVE_ORDER"
+
     return "MENU"
+
+
+async def _handle_active_order(update, context):
+    """Handles the ACTIVE_ORDER state. Navigates back to menu or catalog.
+
+    Args:
+        update (telegram.Update): The current Telegram update object.
+        context (telegram.ext.ContextTypes.DEFAULT_TYPE): The current callback context.
+
+    Returns:
+        str: The next FSM state identifier.
+    """
+    if update.message:
+        await update.effective_message.reply_text(text="Пожалуйста, используйте кнопки управления выше 👆")
+        return "ACTIVE_ORDER"
+
+    query = update.callback_query
+
+    if not query or not query.data:
+        return "ACTIVE_ORDER"
+
+    if query.data == "menu":
+        return await render_main_menu(query=query)
+
+    if query.data == "catalog":
+        return await render_catalog(update=update, context=context, query=query, send_new=False)
+
+    return "ACTIVE_ORDER"
 
 
 async def _handle_about(update, context):
@@ -253,6 +363,8 @@ async def _handle_cart(update, context):
     redis_db = context.bot_data["redis_db"]
     url = context.bot_data["strapi_url"]
     token = context.bot_data["strapi_token"]
+    user_role = context.bot_data["strapi_user_role"]
+    user_password = context.bot_data["strapi_user_password"]
     tg_id = update.effective_chat.id
 
     if query.data == "menu":
@@ -272,6 +384,17 @@ async def _handle_cart(update, context):
             return "CART"
 
     if query.data == "order":
+        strapi_user_id = await get_or_create_user(
+            session=session, db=redis_db, url=url, token=token,
+            user_role=user_role, user_password=user_password, email=None, tg_id=tg_id
+        )
+        if strapi_user_id:
+            active_order = await get_active_order(session=session, url=url, token=token, user_id=strapi_user_id)
+            if active_order:
+                await query.answer("⚠️ Вы не можете сделать новый заказ, пока предыдущий заказ находится в обработке.",
+                                   show_alert=True)
+                return "CART"
+
         cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
         if not cart_id:
             await query.answer("⚠️ Не удалось найти вашу корзину. Повторите позже.", show_alert=True)
@@ -330,16 +453,16 @@ async def _handle_email(update, context):
         await update.callback_query.answer("Пожалуйста, введите вашу почту текстом.", show_alert=True)
         return "WAITING_EMAIL"
 
-    email = update.message.text.strip().lower()
-    email_regex = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    user_input = update.message.text.strip().lower()
+    email = _validate_email_syntax(email=user_input)
 
-    if not re.match(email_regex, email):
+    if not email:
         await update.message.reply_text(
             text="❌ Некорректный формат почты. Пожалуйста, попробуйте еще раз.\n\nПример: example@mail.ru",
         )
         return "WAITING_EMAIL"
 
-    loading_message = await update.message.reply_text("⏳ Оформляем заказ...")
+    loading_message = await update.message.reply_text("⏳ Регистрируем ваш профиль...")
 
     redis_db = context.bot_data["redis_db"]
     session = context.bot_data["http_session"]
@@ -364,15 +487,86 @@ async def _handle_email(update, context):
 
     is_linked = await link_user_to_cart(session=session, url=url, token=token, cart_id=cart_id, user_id=strapi_user_id)
     if is_linked:
+        context.user_data["user_email"] = email
         await loading_message.edit_text(
-            text=f"🎉 Заказ успешно оформлен!\n\nПользователь с почтой {email} успешно зарегистрирован и привязан к "
-                 f"вашей корзине. Наш менеджер скоро свяжется с вами.",
-            reply_markup=get_main_menu_keyboard()
+            text=f"📞 Почта зарегистрирована!\n\nТеперь введите ваш номер телефона для связи с менеджером.\nПример: +79991234567"
+        )
+        return "WAITING_PHONE"
+    else:
+        await loading_message.edit_text(text="⚠️ Не удалось привязать вашу корзину к профилю.\n"
+                                             "Вы можете связаться с менеджером по телефону: +7-999-123-45-67",
+                                        reply_markup=get_main_menu_keyboard())
+        return "MENU"
+
+
+async def _handle_phone(update, context):
+    """Handles the WAITING_PHONE state. Validates phone and registers an order in Strapi.
+
+    Args:
+        update (telegram.Update): The current Telegram update object.
+        context (telegram.ext.ContextTypes.DEFAULT_TYPE): The current callback context.
+
+    Returns:
+        str: The next FSM state identifier.
+    """
+    if update.callback_query:
+        await update.callback_query.answer("Пожалуйста, введите ваш телефон текстом.", show_alert=True)
+        return "WAITING_PHONE"
+
+    user_input = update.message.text.strip()
+    phone_number = _validate_and_format_phone(phone_number=user_input)
+
+    if not phone_number:
+        await update.message.reply_text(
+            text="❌ Неверный формат телефона. Пожалуйста, введите корректный номер.\nПример: +79991234567",
+        )
+        return "WAITING_PHONE"
+
+    loading_message = await update.message.reply_text("⏳ Оформляем заказ...")
+
+    session = context.bot_data["http_session"]
+    redis_db = context.bot_data["redis_db"]
+    url = context.bot_data["strapi_url"]
+    token = context.bot_data["strapi_token"]
+    user_role = context.bot_data["strapi_user_role"]
+    user_password = context.bot_data["strapi_user_password"]
+    user_email = context.user_data.get("user_email")
+    tg_id = update.effective_chat.id
+
+    cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
+
+    strapi_user_id = await get_or_create_user(
+        session=session, db=redis_db, url=url, token=token,
+        user_role=user_role, user_password=user_password, email=user_email, tg_id=tg_id
+    )
+    if not strapi_user_id or not cart_id:
+        await loading_message.edit_text("⚠️ Не удалось получить данные профиля.\nПожалуйста, начните оформление заново с корзины.")
+        return "CART"
+
+    cart_products = await get_cart_details(session=session, url=url, token=token, cart_id=cart_id)
+    if not cart_products:
+        await loading_message.edit_text("⚠️ Нельзя оформить заказ с пустой корзиной.")
+
+    order_created = await create_order(
+        session=session, url=url, token=token, user_id=strapi_user_id,
+        phone_number=phone_number, cart_products=cart_products
+    )
+    if order_created:
+        await clear_cart(session=session, url=url, token=token, cart_products=cart_products)
+
+        cart_cache_key = f"strapi:user:{tg_id}:cart-id"
+        await redis_db.delete(cart_cache_key)
+
+        context.user_data.pop("user_email", None)
+
+        await loading_message.edit_text(
+            text=f"🎉 Заказ успешно оформлен!\n\nМенеджер свяжется с вами в ближайшее время для подтверждения заказа.",
+            reply_markup=get_main_menu_keyboard(),
         )
         return "MENU"
     else:
-        await loading_message.edit_text("⚠️ Заказ создан, но не удалось связать его с вашим профилем. Мы разберемся с этим!")
-        return "MENU"
+        await loading_message.edit_text("⚠️ Произошла ошибка на сервере при создании заказа. Попробуйте еще раз позже.")
+        return "WAITING_PHONE"
 
 
 async def handle_user_reply(update, context):
@@ -418,11 +612,13 @@ async def handle_user_reply(update, context):
     states_functions = {
         "START": _start,
         "MENU": _handle_main_menu,
+        "ACTIVE_ORDER": _handle_active_order,
         "ABOUT": _handle_about,
         "CATALOG": _handle_catalog,
         "PRODUCT": _handle_product,
         "CART": _handle_cart,
-        "WAITING_EMAIL": _handle_email
+        "WAITING_EMAIL": _handle_email,
+        "WAITING_PHONE": _handle_phone
     }
     state_handler = states_functions.get(user_state, _start)
 

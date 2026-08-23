@@ -6,20 +6,23 @@ def get_main_menu_keyboard():
 
     Returns:
         InlineKeyboardMarkup: A keyboard matrix containing buttons for 'Catalog',
-            'Cart', and 'About us' sections.
+            'Cart', 'About us', and 'My order' sections.
     """
     keyboard = [
         [
             InlineKeyboardButton("🐟 Каталог", callback_data="catalog"),
-            InlineKeyboardButton("🛒 Корзина", callback_data="cart")
+            InlineKeyboardButton("ℹ️ О нас / Контакты", callback_data="about")
         ],
-        [InlineKeyboardButton("ℹ️ О нас / Контакты", callback_data="about")]
+        [
+            InlineKeyboardButton("🛒 Корзина", callback_data="cart"),
+            InlineKeyboardButton("📦 Мой заказ", callback_data="active_order")
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_about_keyboard():
-    """Generates navigation buttons for the About screen.
+def get_basic_keyboard():
+    """Generates navigation buttons for the About us / My order screens.
 
     Returns:
         InlineKeyboardMarkup: A keyboard matrix with navigation shortcuts

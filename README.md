@@ -164,29 +164,34 @@ Open Telegram, find your bot, and send the `/start` command.
 The database relies on a junction model (CartProduct) to handle a custom Many-to-Many relationship between Carts and Products, 
 allowing the bot to store unique metadata like product quantities.
 
-#### 1. User (System Model: users-permissions)
+### 1. User (System Model: users-permissions)
 Extends the standard Strapi user model to associate customers with their active sessions.
-- `username` (String) — Unique Telegram identifier.
-- `email` (Email) — Customer's email.
-- `password` (Password) — Auto-generated secure password.
-- `cart` (Relation) — Cart has many Users linkage.
-#### 2. Product
+- `cart` (Relation) - User has and belongs to one Cart.
+- `orders` (Relation) - User belongs to many Orders.
+### 2. Product
 Stores the shop's assortment data.
-- `title` (String) — Name of the fish / seafood item.
-- `description` (Long Text) — Detailed product description.
-- `price` (Number) — Price per 1 kilogram.
-- `picture` (Media: Single Media) — Image file uploaded to the Media Library.
-- `cart_products` (Relation) — Product belongs to many CartProducts.
-#### 3. Cart
+- `title` (Short Text) - Name of the fish / seafood item.
+- `description` (Long Text) - Detailed product description.
+- `price` (Decimal Number) - Price per 1 kilogram.
+- `picture` (Media: Single Media) - Image file uploaded to the Media Library.
+- `cart_products` (Relation) - Product belongs to many CartProducts.
+### 3. Cart
 Maintains live Telegram user sessions.
-- `tg_id` (String / BigInt) — Unique Telegram Chat ID.
-- `users_permissions_users` (Relation) — Cart belongs to many Users.
-- `cart_products` (Relation) — Cart belongs to many CartProducts.
-#### 4. CartProduct (Junction Model)
+- `tg_id` (Short Text) - Unique Telegram Chat ID.
+- `users_permissions_users` (Relation) - Cart has and belongs to one User.
+- `cart_products` (Relation) - Cart belongs to many CartProducts.
+### 4. CartProduct (Junction Model)
 Acts as a pivot table to keep track of dynamic quantities for items inside specific carts.
-- `cart` (Relation) — Cart has many CartProducts.
-- `product` (Relation) — Product has many CartProducts.
-- `quantity` (Integer) — The weight of items added.
+- `cart` (Relation) - Cart has many CartProducts.
+- `product` (Relation) - Product has many CartProducts.
+- `quantity` (Decimal Number) - The weight of items added.
+### 5. Order
+Stores order data.
+- `order_id` (Short Text) - Unique order identifier.
+- `users_permissions_users` (Relation) - User has many Orders.
+- `phone_number` (Short Text) - The phone number provided by the user.
+- `active` (Boolean) - Order status (active or inactive). Only one order can be active at a time.
+- `order_items` (JSON) - A list of products including the item name, quantity, and price at the time of the order in JSON format.
 
 
 ## 🔑 Strapi v5 Backend Configuration
@@ -218,6 +223,10 @@ settings page:
   - update (allows incrementing or decrementing product quantities)
   - delete (allows removing an item from the cart)
 
+`Order`:
+  - find (allows locating an active order)
+  - create (allows creating a new order)
+
 `Product`:
   - find (allows pulling the full list of products for the catalog)
   - findOne (allows opening a detailed product description card)
@@ -226,6 +235,7 @@ settings page:
 `Users-Permissions` (under the User subsection)
   - find (allows looking up if a customer's email is already registered)
   - create (allows registering a new user profile with their email during checkout)
+  - update (allows updating the user's email)
 
 `Upload` (Media Library plugin):
   - find (allows the bot to deep-populate and extract relative URLs for fish images stored inside product relations)
