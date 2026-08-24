@@ -217,11 +217,14 @@ async def get_cart_details(session, url, token, cart_id):
         session (aiohttp.ClientSession): The active asynchronous HTTP session.
         url (str): The Strapi API endpoint URL.
         token (str): The Strapi API token to use.
-        cart_id (str): The unique document identifier of the cart.
+        cart_id (str | None): The unique document identifier of the cart.
 
     Returns:
         list: A list of cart products with nested product info, or an empty list if fails.
     """
+    if not cart_id:
+        return []
+
     headers = {"Authorization": f"Bearer {token}"}
     endpoint = f"{url}/api/cart-products"
     params = {

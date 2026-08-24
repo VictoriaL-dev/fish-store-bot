@@ -1,9 +1,10 @@
 import json
 import logging
+from typing import Any
 
 import phonenumbers
 from email_validator import validate_email, EmailNotValidError
-from telegram.error import TimedOut, NetworkError, TelegramError
+from telegram.error import TimedOut, NetworkError, TelegramError, BadRequest
 
 from screens import render_main_menu, render_about, render_catalog
 from keyboards import get_main_menu_keyboard, get_basic_keyboard, get_product_keyboard, get_cart_keyboard
@@ -87,20 +88,21 @@ async def _handle_main_menu(update, context):
         return "MENU"
 
     query = update.callback_query
-
     if not query or not query.data:
         return "MENU"
 
-    if query.data == "catalog":
+    data = query.data
+
+    if data == "catalog":
         return await render_catalog(update=update, context=context, query=query, send_new=False)
 
-    if query.data == "about":
+    if data == "about":
         return await render_about(query=query)
 
-    if query.data == "cart":
+    if data == "cart":
         return await _handle_cart(update=update, context=context)
 
-    if query.data == "active_order":
+    if data == "active_order":
         session = context.bot_data["http_session"]
         redis_db = context.bot_data["redis_db"]
         url = context.bot_data["strapi_url"]
@@ -124,9 +126,9 @@ async def _handle_main_menu(update, context):
 
         products = active_order.get("order_items", [])
         text = (f"📦 *Ваш активный заказ*\n\n"
-                f"*Номер:* {active_order.get('order_id')}\n"
+                f"*Номер:* {active_order.get('order_id', '')}\n"
                 f"*Статус:* в обработке ⏳\n"
-                f"*Телефон:* {active_order.get('phone_number')}\n\n"
+                f"*Телефон:* {active_order.get('phone_number', '')}\n\n"
                 f"*Состав заказа:*\n")
 
         if products:
@@ -166,14 +168,15 @@ async def _handle_active_order(update, context):
         return "ACTIVE_ORDER"
 
     query = update.callback_query
-
     if not query or not query.data:
         return "ACTIVE_ORDER"
 
-    if query.data == "menu":
+    data = query.data
+
+    if data == "menu":
         return await render_main_menu(query=query)
 
-    if query.data == "catalog":
+    if data == "catalog":
         return await render_catalog(update=update, context=context, query=query, send_new=False)
 
     return "ACTIVE_ORDER"
@@ -194,14 +197,15 @@ async def _handle_about(update, context):
         return "ABOUT"
 
     query = update.callback_query
-
     if not query or not query.data:
         return "ABOUT"
 
-    if query.data == "menu":
+    data = query.data
+
+    if data == "menu":
         return await render_main_menu(query=query)
 
-    if query.data == "catalog":
+    if data == "catalog":
         return await render_catalog(update=update, context=context, query=query, send_new=False)
 
     return "ABOUT"
@@ -222,75 +226,94 @@ async def _handle_catalog(update, context):
         return "CATALOG"
 
     query = update.callback_query
-
     if not query or not query.data:
         return "CATALOG"
 
-    if query.data == "menu":
-        return await render_main_menu(query=query)
+    data: Any = query.data
 
-    if query.data == "cart":
-        return await _handle_cart(update=update, context=context)
+    if isinstance(data, str):
+        if data == "menu":
+            return await render_main_menu(query=query)
 
-    if query.data.startswith("product_"):
-        session = context.bot_data["http_session"]
-        redis_db = context.bot_data["redis_db"]
-        url = context.bot_data["strapi_url"]
-        token = context.bot_data["strapi_token"]
+        if data == "cart":
+            return await _handle_cart(update=update, context=context)
 
-        product_id = query.data.split("_")[1]
-        product = await get_product_by_id(session=session, db=redis_db, url=url, token=token, product_id=product_id)
+        if data == "catalog":
+            return await render_catalog(update=update, context=context, query=query, send_new=False)
 
-        if not product:
-            await query.edit_message_text(
-                text="ℹ️ Данные о товаре временно отсутствуют.\n\nПожалуйста, загляните позже!",
-                reply_markup=get_product_keyboard(product_id="")
-            )
-            return "PRODUCT"
+    if isinstance(data, dict):
+        action = data.get("action")
 
-        caption, full_image_url = parse_product(url=url, product=product)
-        reply_markup = get_product_keyboard(product_id=product_id)
+        if action == "change_page":
+            context.user_data["catalog_page"] = data["page"]
+            return await render_catalog(update=update, context=context, query=query, send_new=False)
 
-        try:
-            await query.delete_message()
-        except TelegramError:
-            pass
+        if action == "view_product":
+            session = context.bot_data["http_session"]
+            redis_db = context.bot_data["redis_db"]
+            url = context.bot_data["strapi_url"]
+            token = context.bot_data["strapi_token"]
+            tg_id = update.effective_chat.id
 
-        file_id_cache_key = f"tg-bot:product:{product_id}:image-id"
-        cached_file_id = await redis_db.get(file_id_cache_key)
+            product_id = data["id"]
+            product = await get_product_by_id(session=session, db=redis_db, url=url, token=token, product_id=product_id)
 
-        if cached_file_id:
-            try:
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id, photo=cached_file_id,
-                    caption=caption, reply_markup=reply_markup
+            if not product:
+                await query.edit_message_text(
+                    text="ℹ️ Данные о товаре временно отсутствуют.\n\nПожалуйста, загляните позже!",
+                    reply_markup=get_product_keyboard(product_id="", quantity_in_cart=0)
                 )
                 return "PRODUCT"
-            except Exception as e:
-                logger.warning(f"The cached file id for product '{product_id}' is out of date or invalid: {e}")
+
+            cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
+            cart_items = await get_cart_details(session=session, url=url, token=token, cart_id=cart_id)
+
+            quantity_in_cart = 0
+            if cart_items:
+                for item in cart_items:
+                    if item.get("product", {}).get("documentId") == product_id:
+                        quantity_in_cart = item.get("quantity", 0)
+                        break
+            reply_markup = get_product_keyboard(product_id=product_id, quantity_in_cart=quantity_in_cart)
+
+            try:
+                await query.delete_message()
+            except (TelegramError, BadRequest):
                 pass
 
-        if full_image_url:
-            async with download_product_image(session=session, image_url=full_image_url) as photo_file:
-                if photo_file:
-                    try:
-                        sent_message = await context.bot.send_photo(
-                            chat_id=update.effective_chat.id, photo=photo_file,
-                            caption=caption, reply_markup=reply_markup
-                        )
-                        tg_file_id = sent_message.photo[-1].file_id
-                        await redis_db.set(file_id_cache_key, tg_file_id, ex=2592000)
-                        return "PRODUCT"
-                    except Exception as e:
-                        logger.exception(f"Failed to send message with downloaded photo: {e}")
-                        pass
+            caption, full_image_url = parse_product(url=url, product=product)
 
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=caption,
-            reply_markup=reply_markup
-        )
-        return "PRODUCT"
+            file_id_cache_key = f"tg-bot:product:{product_id}:image-id"
+            cached_file_id = await redis_db.get(file_id_cache_key)
+
+            if cached_file_id:
+                try:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id, photo=cached_file_id,
+                        caption=caption, reply_markup=reply_markup
+                    )
+                    return "PRODUCT"
+                except Exception as e:
+                    logger.warning(f"The cached file id for product '{product_id}' is out of date or invalid: {e}")
+                    pass
+
+            if full_image_url:
+                async with download_product_image(session=session, image_url=full_image_url) as photo_file:
+                    if photo_file:
+                        try:
+                            sent_message = await context.bot.send_photo(
+                                chat_id=update.effective_chat.id, photo=photo_file,
+                                caption=caption, reply_markup=reply_markup
+                            )
+                            tg_file_id = sent_message.photo[-1].file_id
+                            await redis_db.set(file_id_cache_key, tg_file_id, ex=2592000)
+                            return "PRODUCT"
+                        except Exception as e:
+                            logger.exception(f"Failed to send message with downloaded photo: {e}")
+                            pass
+
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, reply_markup=reply_markup)
+            return "PRODUCT"
 
     return "CATALOG"
 
@@ -310,32 +333,49 @@ async def _handle_product(update, context):
         return "PRODUCT"
 
     query = update.callback_query
-
     if not query or not query.data:
         return "PRODUCT"
 
-    if query.data == "catalog":
-        return await render_catalog(update=update, context=context, query=query, send_new=True)
+    data: Any = query.data
 
-    if query.data.startswith("add_"):
-        session = context.bot_data["http_session"]
-        redis_db = context.bot_data["redis_db"]
-        url = context.bot_data["strapi_url"]
-        token = context.bot_data["strapi_token"]
-        tg_id = update.effective_chat.id
+    if isinstance(data, str):
+        if data == "catalog":
+            return await render_catalog(update=update, context=context, query=query, send_new=True)
 
-        cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
-        if not cart_id:
-            await query.answer("⚠️ Не удалось найти вашу корзину. Повторите позже.", show_alert=True)
+    if isinstance(data, dict):
+        action = data.get("action")
+
+        if action == "add_to_cart":
+            session = context.bot_data["http_session"]
+            redis_db = context.bot_data["redis_db"]
+            url = context.bot_data["strapi_url"]
+            token = context.bot_data["strapi_token"]
+            tg_id = update.effective_chat.id
+
+            product_id = data["id"]
+
+            cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
+            if not cart_id:
+                await query.answer("⚠️ Не удалось найти вашу корзину. Повторите позже.", show_alert=True)
+                return "PRODUCT"
+
+            is_added = await add_product_to_cart(session=session, url=url, token=token, cart_id=cart_id, product_id=product_id)
+            if is_added:
+                cart_items = await get_cart_details(session=session, url=url, token=token, cart_id=cart_id)
+
+                new_quantity = 0
+                if cart_items:
+                    for item in cart_items:
+                        if item.get("product", {}).get("documentId") == product_id:
+                            new_quantity = item.get("quantity", 0)
+                            break
+                new_markup = get_product_keyboard(product_id=product_id, quantity_in_cart=new_quantity)
+
+                await query.edit_message_reply_markup(reply_markup=new_markup)
+                await query.answer("🛒 Товар успешно добавлен в корзину!")
+            else:
+                await query.answer("⚠ Не удалось добавить товар в корзину.")
             return "PRODUCT"
-
-        product_id = query.data.split("_")[1]
-        is_added = await add_product_to_cart(session=session, url=url, token=token, cart_id=cart_id, product_id=product_id)
-        if is_added:
-            await query.answer("🛒 Товар успешно добавлен в корзину!")
-        else:
-            await query.answer("⚠ Не удалось добавить товар в корзину.")
-        return "PRODUCT"
 
     return "PRODUCT"
 
@@ -355,9 +395,10 @@ async def _handle_cart(update, context):
         return "CART"
 
     query = update.callback_query
-
     if not query or not query.data:
         return "CART"
+
+    data: Any = query.data
 
     session = context.bot_data["http_session"]
     redis_db = context.bot_data["redis_db"]
@@ -367,48 +408,52 @@ async def _handle_cart(update, context):
     user_password = context.bot_data["strapi_user_password"]
     tg_id = update.effective_chat.id
 
-    if query.data == "menu":
-        return await render_main_menu(query=query)
+    if isinstance(data, dict):
+        action = data.get("action")
 
-    if query.data == "catalog":
-        return await render_catalog(update=update, context=context, query=query, send_new=False)
+        if action == "delete_from_cart":
+            cart_product_id = data["id"]
+            is_deleted = await remove_cart_product(session=session, url=url, token=token, cart_product_id=cart_product_id)
 
-    if query.data.startswith("del_"):
-        cart_product_id = query.data.split("_")[1]
-        is_deleted = await remove_cart_product(session=session, url=url, token=token, cart_product_id=cart_product_id)
-
-        if is_deleted:
-            await query.answer("💥 Товар удален из корзины.")
-        else:
-            await query.answer("⚠️ Не удалось удалить товар. Попробуйте позже.")
-            return "CART"
-
-    if query.data == "order":
-        strapi_user_id = await get_or_create_user(
-            session=session, db=redis_db, url=url, token=token,
-            user_role=user_role, user_password=user_password, email=None, tg_id=tg_id
-        )
-        if strapi_user_id:
-            active_order = await get_active_order(session=session, url=url, token=token, user_id=strapi_user_id)
-            if active_order:
-                await query.answer("⚠️ Вы не можете сделать новый заказ, пока предыдущий заказ находится в обработке.",
-                                   show_alert=True)
+            if is_deleted:
+                await query.answer("💥 Товар удален из корзины.")
+            else:
+                await query.answer("⚠️ Не удалось удалить товар. Попробуйте позже.")
                 return "CART"
 
-        cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
-        if not cart_id:
-            await query.answer("⚠️ Не удалось найти вашу корзину. Повторите позже.", show_alert=True)
-            return "CART"
+    if isinstance(data, str):
+        if data == "menu":
+            return await render_main_menu(query=query)
 
-        cart_products = await get_cart_details(session=session, url=url, token=token, cart_id=cart_id)
-        if not cart_products:
-            await query.answer("⚠️ Нельзя оформить заказ с пустой корзиной.", show_alert=True)
-            return "CART"
+        if data == "catalog":
+            return await render_catalog(update=update, context=context, query=query, send_new=False)
 
-        await query.edit_message_text(
-            text="📧 Пожалуйста, введите ваш адрес электронной почты для оформления заказа.\nПример: example@mail.ru"
-        )
-        return "WAITING_EMAIL"
+        if data == "order":
+            strapi_user_id = await get_or_create_user(
+                session=session, db=redis_db, url=url, token=token,
+                user_role=user_role, user_password=user_password, email=None, tg_id=tg_id
+            )
+            if strapi_user_id:
+                active_order = await get_active_order(session=session, url=url, token=token, user_id=strapi_user_id)
+                if active_order:
+                    await query.answer("⚠️ Вы не можете сделать новый заказ, пока предыдущий заказ находится в обработке.",
+                                       show_alert=True)
+                    return "CART"
+
+            cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
+            if not cart_id:
+                await query.answer("⚠️ Не удалось найти вашу корзину. Повторите позже.", show_alert=True)
+                return "CART"
+
+            cart_products = await get_cart_details(session=session, url=url, token=token, cart_id=cart_id)
+            if not cart_products:
+                await query.answer("⚠️ Нельзя оформить заказ с пустой корзиной.", show_alert=True)
+                return "CART"
+
+            await query.edit_message_text(
+                text="📧 Пожалуйста, введите ваш адрес электронной почты для оформления заказа.\nПример: example@mail.ru"
+            )
+            return "WAITING_EMAIL"
 
     cart_id = await get_or_create_cart(session=session, db=redis_db, url=url, token=token, tg_id=tg_id)
     if not cart_id:
@@ -493,8 +538,7 @@ async def _handle_email(update, context):
         )
         return "WAITING_PHONE"
     else:
-        await loading_message.edit_text(text="⚠️ Не удалось привязать вашу корзину к профилю.\n"
-                                             "Вы можете связаться с менеджером по телефону: +7-999-123-45-67",
+        await loading_message.edit_text(text="⚠️ Не удалось привязать вашу корзину к профилю.\nПопробуйте оформить заказ позже.",
                                         reply_markup=get_main_menu_keyboard())
         return "MENU"
 
@@ -569,6 +613,33 @@ async def _handle_phone(update, context):
         return "WAITING_PHONE"
 
 
+async def handle_invalid_button(update, context):
+    """Handles button clicks if the received callback data has been tampered with or deleted from cache.
+
+    Args:
+        update (telegram.Update): The current Telegram update object.
+        context (telegram.ext.ContextTypes.DEFAULT_TYPE): The current callback context.
+
+    Returns:
+        None: This coroutine does not return a value.
+    """
+    query = update.callback_query
+    if not query:
+        return
+
+    try:
+        await query.answer(
+            text="🔄 Магазин обновился. Пожалуйста, перезапустите бота командой /start.",
+            show_alert=True
+        )
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🔄 Магазин обновился.\nПожалуйста, перезапустите бота командой /start."
+        )
+    except (TelegramError, BadRequest):
+        pass
+
+
 async def handle_user_reply(update, context):
     """Manages custom FSM state routing.
 
@@ -583,15 +654,16 @@ async def handle_user_reply(update, context):
         return
     tg_id = update.effective_chat.id
 
+    user_reply = None
     if update.message and update.message.text:
         user_reply = update.message.text
-    elif update.callback_query and update.callback_query.data:
+    elif update.callback_query and update.callback_query.data is not None:
         user_reply = update.callback_query.data
-    else:
+
+    if user_reply is None:
         return
 
     redis_db = context.bot_data["redis_db"]
-
     user_key = f"tg-bot:user:{tg_id}:state"
     lock_key = f"tg-bot:user:{tg_id}:lock"
 
@@ -599,11 +671,11 @@ async def handle_user_reply(update, context):
     if is_locked and update.callback_query:
         try:
             await update.callback_query.answer("Секунду, обрабатываю предыдущий запрос... ⏳")
-        except TelegramError:
+        except (TelegramError, BadRequest):
             pass
         return
 
-    if user_reply == "/start":
+    if isinstance(user_reply, str) and user_reply == "/start":
         user_state = "START"
     else:
         cached_state = await redis_db.get(user_key)
@@ -635,7 +707,7 @@ async def handle_user_reply(update, context):
         if update.callback_query:
             try:
                 await update.callback_query.answer()
-            except TelegramError:
+            except (TelegramError, BadRequest):
                 pass
 
 

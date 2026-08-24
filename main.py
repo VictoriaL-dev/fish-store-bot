@@ -4,13 +4,14 @@ import aiohttp
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
+    InvalidCallbackData,
     CommandHandler,
     MessageHandler,
     filters
 )
 
 from config import settings
-from handlers import handle_user_reply, handle_tg_error
+from handlers import handle_user_reply, handle_invalid_button, handle_tg_error
 from logging_config import init_app_logging, stop_app_logging
 from database import get_db_connection, close_db_connection
 
@@ -74,6 +75,7 @@ def main():
         app = (
             ApplicationBuilder()
             .token(settings.TG_BOT_TOKEN)
+            .arbitrary_callback_data(True)
             .post_init(on_app_start)
             .post_stop(on_app_stop)
             .build()
@@ -88,6 +90,7 @@ def main():
         app.bot_data["strapi_user_password"] = settings.STRAPI_USER_PASSWORD
 
         app.add_handler(CommandHandler("start", handle_user_reply))
+        app.add_handler(CallbackQueryHandler(handle_invalid_button, pattern=InvalidCallbackData))
         app.add_handler(CallbackQueryHandler(handle_user_reply))
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_user_reply))
 

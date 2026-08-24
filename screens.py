@@ -1,4 +1,4 @@
-from telegram.error import TelegramError
+from telegram.error import TelegramError, BadRequest
 
 from strapi_api import get_all_products
 from keyboards import get_main_menu_keyboard, get_basic_keyboard, get_catalog_keyboard
@@ -48,8 +48,8 @@ async def render_about(query):
     return "ABOUT"
 
 
-async def render_catalog(update, context, query, send_new):
-    """Edits or sends a new message to show the product catalog screen.
+async def render_catalog(update, context, query, send_new, per_page=8):
+    """Edits or sends a new message to show the paginated product catalog screen.
 
     Args:
         update (telegram.Update): The current Telegram update object.
@@ -57,6 +57,7 @@ async def render_catalog(update, context, query, send_new):
         query (telegram.CallbackQuery): The callback query that triggered this screen.
         send_new (bool): If True, deletes the old message and sends a new one;
             otherwise, edits the existing message text.
+        per_page (int): Maximum items to display on a single page. Defaults to 8.
 
     Returns:
         str: The next FSM state identifier 'CATALOG'.
@@ -65,20 +66,21 @@ async def render_catalog(update, context, query, send_new):
     url = context.bot_data["strapi_url"]
     token = context.bot_data["strapi_token"]
     session = context.bot_data["http_session"]
+    page = context.user_data.get("catalog_page", 1)
 
     products = await get_all_products(session=session, db=redis_db, url=url, token=token)
 
     if products:
         text = "📋 Наш ассортимент.\n\nВыберите интересующий товар для просмотра деталей:"
-        reply_markup = get_catalog_keyboard(products=products)
+        reply_markup = get_catalog_keyboard(products=products, page=page, per_page=per_page)
     else:
         text = "ℹ️ Каталог временно пуст.\n\nНаша команда уже обновляет ассортимент. Пожалуйста, загляните позже!"
-        reply_markup = get_catalog_keyboard(products=[])
+        reply_markup = get_catalog_keyboard(products=[], page=page, per_page=per_page)
 
     if send_new:
         try:
             await query.delete_message()
-        except TelegramError:
+        except (TelegramError, BadRequest):
             pass
 
         await context.bot.send_message(

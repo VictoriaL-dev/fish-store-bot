@@ -1,6 +1,6 @@
 pydantic-settings==2.14.2
 aiohttp==3.14.3
 redis==8.0.1
-python-telegram-bot==22.8
+python-telegram-bot[callback-data]==22.8
 phonenumbers==9.0.37
 email-validator==2.3.0

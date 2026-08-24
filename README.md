@@ -5,9 +5,9 @@ inventory management, catalog distribution, and secure user processing.
 
 By leveraging an asynchronous `Redis` connection pool, the bot manages independent customer session 
 states (FSM) and high-speed memory locks to guarantee a non-blocking user experience under request concurrency. 
-The entire network architecture is built on cooperative multitasking via `asyncio`, utilizing `aiohttp` 
-and `python-telegram-bot v22.x` to enable customers to seamlessly browse fresh product assortments, modify shopping carts, 
-and finalize order details dynamically right from their devices without structural I/O bottlenecks.
+The entire network architecture is built on cooperative multitasking, utilizing `aiohttp` and `python-telegram-bot v22.x` 
+to enable customers to seamlessly browse fresh product assortments, modify shopping carts, and finalize order details 
+dynamically right from their devices.
 
 
 ## 📌 Table of Contents
