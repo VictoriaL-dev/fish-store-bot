@@ -49,6 +49,7 @@ dynamically right from their devices.
 ├── handlers.py               # Core asynchronous FSM step handlers routing user navigation
 ├── strapi_api.py             # Asynchronous Strapi CMS HTTP integration engine
 ├── main.py                   # Main entry point for the Telegram bot
+├── Dockerfile.strapi.dev     # Strapi container blueprint
 ├── docker-compose-dev.yaml   # Docker services orchestration
 └── requirements.txt          # Python dependencies
 ```
