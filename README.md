@@ -9,6 +9,8 @@ The entire network architecture is built on cooperative multitasking, utilizing 
 to enable customers to seamlessly browse fresh product assortments, modify shopping carts, and finalize order details 
 dynamically right from their devices.
 
+![Telegram Fish Store Bot](https://github.com/user-attachments/assets/299d5711-cc08-41ed-8e18-a889bea5782b)
+
 
 ## 📌 Table of Contents
 - [⚙️ Tech Stack](#-tech-stack)
@@ -137,27 +139,30 @@ pip install -r requirements.txt
 
 ## 🚀 Quick Start Guide
 ### Development Server Launch
-#### 1. Spin up PostgreSQL and Redis using Docker:
+#### 1. Spin up the backend stack (PostgreSQL, Redis, and Strapi):
+Make sure your environment variables are configured in the root `.env` and `strapi/.env` files. Then, run the following command from the root directory to build and launch all backend services in development mode:
 ```bash
-docker-compose -f docker-compose-dev.yaml up -d
+docker compose -f docker-compose-dev.yaml up --build
 ```
-> ℹ️ _Note: Wait a few seconds for the database healthcheck to pass before proceeding._
+> ℹ️ _Note: The infrastructure automatically configures internal networking. Strapi will wait until PostgreSQL is 
+> healthy before initialization._
 
-#### 2. Start the Strapi development server:
-```bash
-cd strapi
-npm run develop
-```
 You can access the admin panel at [http://localhost:1337/admin](http://localhost:1337/admin).
 
-#### 3. Run the Telegram bot:
-Open a new terminal in the root directory, activate your Python virtual environment, and start the bot:
+#### 2. Run the Telegram bot:
+Open a new terminal window or tab in the project root directory, activate your Python virtual environment, and boot up the bot application:
 ```bash
 python main.py
 ```
 
-#### 4. Test the bot: 
+#### 3. Test the bot: 
 Open Telegram, find your bot, and send the `/start` command.
+
+#### 4. Useful Docker Compose commands:
+- `docker compose -f docker-compose-dev.yaml down` - Stop and remove all containers and networks defined in the dev configuration.
+- `docker compose -f docker-compose-dev.yaml up -d` - Start all containers in detached background mode.
+- `docker compose -f docker-compose-dev.yaml restart` - Restart all containers.
+- `docker compose -f docker-compose-dev.yaml logs -f strapi` - View and follow real-time logs from Strapi.
 
 
 ## 📊 Database Models Architecture (Strapi v5)

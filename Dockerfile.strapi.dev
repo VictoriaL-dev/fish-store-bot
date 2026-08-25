@@ -1,0 +1,17 @@
+FROM node:22-alpine
+
+RUN apk update && apk add --no-cache libc6-compat bash
+
+ENV NODE_ENV=development
+
+WORKDIR /app
+
+COPY strapi/package.json strapi/package-lock.json ./
+
+RUN npm install && npm cache clean --force
+
+COPY strapi/ .
+
+EXPOSE 1337
+
+CMD ["npm", "run", "develop"]

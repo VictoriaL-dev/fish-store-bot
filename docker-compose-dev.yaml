@@ -42,6 +42,27 @@ services:
       postgres:
         condition: service_healthy
 
+  strapi:
+    container_name: strapi-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.strapi.dev
+    restart: unless-stopped
+    env_file:
+      - ./strapi/.env
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+    volumes:
+      - ./strapi:/app
+      - /app/node_modules
+      - /app/.strapi
+    ports:
+      - "1337:1337"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
